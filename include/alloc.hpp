@@ -95,12 +95,7 @@ private:
 
 /// Offer equivalent pmr allocator types
 namespace pmr {
-#include <set>
-#include <map>
-#include <unordered_set>
-#include <unordered_map>
-#include <stack>
-#include <queue>
+
 template<typename T>
 using vector = std::vector<T, profile_allocator<T, std::pmr::polymorphic_allocator<T>>>;
 
@@ -142,6 +137,7 @@ using stack = std::stack<T, profile_allocator<T, std::pmr::polymorphic_allocator
 
 template<typename T>
 using queue = std::queue<T, profile_allocator<T, std::pmr::polymorphic_allocator<T>>>;
+
 } // namespace pmr
 
 } // namespace erata
