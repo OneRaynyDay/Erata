@@ -48,13 +48,21 @@ class profile_state {
         std::size_t size;
         // The address in the heap.
         location_type location;
+
+        template <typename T>
+        record(std::size_t scope, std::size_t size, T* ptr) noexcept :
+            scope(scope), type_hash(typeid(T).hash_code()), size(size), location((location_type) ptr) {}
+
+        record() = default;
+        record(const record&) = default;
+        record& operator=(const record&) = default;
     };
 
     /// Aggregation types
     /// averages can be computed with a tuple of (double, unsigned int),
     /// and stddev can be computed with the square of sum aggregates also in (double, unsigned int)
     /// currently we calculate up to the 2nd moment.
-    using moment_type = std::tuple<double, double, unsigned int>;
+    using moment_type = std::tuple<std::size_t, std::size_t>;
     /// maxes can be computed with a single type std::size_t
     using max_type = std::size_t;
     /// mins similarly
@@ -66,7 +74,7 @@ class profile_state {
     moment_type moments;
     max_type max_size;
     min_type min_size;
-    count_type count;
+    count_type counts;
 
     // TODO Optimize?
     // The user is allows to change the scope of the profile_state so they can easily visualize which
@@ -81,8 +89,11 @@ class profile_state {
     std::unordered_map<std::size_t, std::string> typenames;
 
     // Book-keeping for maximum number of records.
-    std::array<record, record_buffer_size> record_buffer;
-    int record_buffer_counter;
+    std::array<record, record_buffer_size> allocate_records;
+    int allocate_record_counter;
+
+    std::array<record, record_buffer_size> deallocate_records;
+    int deallocate_record_counter;
 
 public:
     // Following clang-tidy's rules to move this to public
@@ -93,7 +104,7 @@ public:
     profile_state& operator=(const profile_state&) = delete;
 
     /// Return the singleton profile_state.
-    static profile_state& get_state() {
+    static profile_state& get_state() noexcept {
         /// Singleton containing state necessary for all profile_allocators
         static profile_state state;
         return state;
@@ -121,9 +132,52 @@ public:
         return it->second;
     }
 
+    template <typename T>
+    void record_allocation(T* p, std::size_t n) {
+        // Updating statistics
+        auto alloc_size = sizeof(T) * n;
+        max_size = std::max(max_size, alloc_size);
+        min_size = std::min(min_size, alloc_size);
+        counts++;
+        std::get<0>(moments) += alloc_size;
+        std::get<1>(moments) += alloc_size * alloc_size;
+
+        // Add string type id to map if it doesn't exist.
+        auto hash_code = typeid(T).hash_code();
+        if (typenames.find(hash_code) == typenames.end()) {
+#ifdef __GNUG__
+            // Setting it to a value that the fn cannot return
+            int status = -4;
+            char* res = abi::__cxa_demangle(typeid(T).name(), nullptr, nullptr, &status);
+            std::string s(res);
+            typenames.emplace(hash_code, s);
+            // res is allocated on the heap from above.
+            std::free(res);
+#else
+            throw std::runtime_error("Not implemented for non-g++ platform");
+#endif
+        }
+
+        // Add to records
+        allocate_records[allocate_record_counter++] = record(scopes.top(), alloc_size, p);
+        if (allocate_record_counter >= record_buffer_size)  [[unlikely]] {
+            throw std::runtime_error("Not implemented flush into file.");
+        }
+    }
+
+    template <typename T>
+    void record_deallocation(T* p, std::size_t size) {
+        // Add to records
+        deallocate_records[deallocate_record_counter++] = record(scopes.top(), size, p);
+        if (deallocate_record_counter >= record_buffer_size)  [[unlikely]] {
+            throw std::runtime_error("Not implemented flush into file.");
+        }
+    }
+
 private:
-    profile_state() : moments(0, 0, 0), max_size(0), min_size(0), count(0),
-                      scopes(), record_buffer(), record_buffer_counter(0) {
+    profile_state() noexcept : moments(0, 0), max_size(0), min_size(0), counts(0),
+                               scopes(),
+                               allocate_record_counter(0), deallocate_record_counter(0) {
         scopes.push(GLOBAL_SCOPE_HASH);
     }
 };
@@ -173,14 +227,16 @@ public:
             alloc(other.alloc), state(profile_state::get_state()) {}
 
     [[nodiscard]] T* allocate(std::size_t n) {
-        auto p = alloc.allocate(n);
+        T* p = alloc.allocate(n);
         std::cout << "Creating " << abi::__cxa_demangle(typeid(T).name(), nullptr, nullptr, nullptr) << " at address " << (unsigned long) p << std::endl;
+        state.record_allocation(p, n);
         return p;
     }
 
     void deallocate(T* p, std::size_t size) noexcept {
         std::cout << "Deleting " << abi::__cxa_demangle(typeid(T).name(), nullptr, nullptr, nullptr) << " at address " << (unsigned long) p << std::endl;
         alloc.deallocate(p, size);
+        state.record_deallocation(p, size);
     }
 
 private:
@@ -239,5 +295,57 @@ using wstring = basic_string<wchar_t>;
 using u8string = basic_string<char8_t>;
 using u16string = basic_string<char16_t>;
 using u32string = basic_string<char32_t>;
+
+namespace pmr {
+template <typename T>
+using vector = vector<T, std::pmr::polymorphic_allocator<T>>;
+
+template <typename T>
+using deque = deque<T, std::pmr::polymorphic_allocator<T>>;
+
+template <typename T>
+using forward_list = forward_list<T, std::pmr::polymorphic_allocator<T>>;
+
+template <typename T>
+using list = list<T, std::pmr::polymorphic_allocator<T>>;
+
+template <typename T>
+using set = set<T, std::pmr::polymorphic_allocator<T>>;
+
+template <typename T>
+using map = map<T, std::pmr::polymorphic_allocator<T>>;
+
+template <typename T>
+using multiset = multiset<T, std::pmr::polymorphic_allocator<T>>;
+
+template <typename T>
+using multimap = multimap<T, std::pmr::polymorphic_allocator<T>>;
+
+template <typename T>
+using unordered_set = unordered_set<T, std::pmr::polymorphic_allocator<T>>;
+
+template <typename T>
+using unordered_map = unordered_map<T, std::pmr::polymorphic_allocator<T>>;
+
+template <typename T>
+using unordered_multiset = unordered_multiset<T, std::pmr::polymorphic_allocator<T>>;
+
+template <typename T>
+using unordered_multimap = unordered_multimap<T, std::pmr::polymorphic_allocator<T>>;
+
+template <typename T>
+using stack = stack<T, std::pmr::polymorphic_allocator<T>>;
+
+template <typename T>
+using queue = queue<T, std::pmr::polymorphic_allocator<T>>;
+
+template <typename CharT, class Traits = std::char_traits<CharT>>
+using basic_string = basic_string<CharT, Traits, std::pmr::polymorphic_allocator<CharT>>;
+using string = basic_string<char>;
+using wstring = basic_string<wchar_t>;
+using u8string = basic_string<char8_t>;
+using u16string = basic_string<char16_t>;
+using u32string = basic_string<char32_t>;
+} // namespace pmr
 
 } // namespace erata
