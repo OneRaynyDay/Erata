@@ -4,3 +4,6 @@
 [submodule "third-party/catch2"]
 	path = third-party/catch2
 	url = git@github.com:catchorg/Catch2.git
+[submodule "third-party/json"]
+	path = third-party/json
+	url = git@github.com:nlohmann/json.git

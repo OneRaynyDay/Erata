@@ -22,6 +22,9 @@
 #include "spdlog/spdlog.h"
 #include "spdlog/sinks/basic_file_sink.h"
 
+// Using json to stringify ending maps
+#include "nlohmann/json.hpp"
+
 // Using fmt to format record structs into json
 #include "spdlog/fmt/fmt.h"
 #include "spdlog/fmt/bundled/chrono.h"
@@ -33,19 +36,25 @@
 
 namespace ert {
 
+using json = nlohmann::json;
+
 // Keep this many records in the buffer
 static constexpr int record_buffer_size = 100;
 // Designate the global scope to be of hash 0.
 static constexpr auto GLOBAL_SCOPE_HASH = 0;
 
+const std::string alloc_filename("todo_change_this_alloc.txt");
+const std::string dealloc_filename("todo_change_this_dealloc.txt");
+
 /// Statically managed state objects for allocators which are trivially copyable and movable.
 /// TODO: Make this thread-safe. This may require a singleton-per-thread thread_local storage design.
 class profile_state {
+    /// We need timestamp for both record and the beginning of the program.
+    using timestamp_type = unsigned long;
     /// Record type used in each memory transaction
     /// TODO: Optimize using alignas
     struct record {
         using location_type = unsigned long;
-        using timestamp_type = unsigned long;
         static_assert(sizeof(location_type) >= sizeof(void*), "Address of variables cannot be stored in current location type.");
 
         // The hashed name of the scope in which this variable is allocated.
@@ -62,7 +71,7 @@ class profile_state {
         template <typename T>
         record(std::size_t scope_hash, std::size_t size, T* ptr) noexcept :
             scope_hash(scope_hash), type_hash(typeid(T).hash_code()), size(size), location((location_type) ptr),
-            timestamp(std::chrono::system_clock::now().time_since_epoch() / std::chrono::milliseconds(1)) {}
+            timestamp(get_current_timestamp()) {}
 
         record() = default;
         record(const record&) = default;
@@ -102,12 +111,15 @@ class profile_state {
 
     // TODO Optimize?
     // Storing the cxx abi name mangling dictionary information here. Similar to scope names, we want to
-    // keep the typenames hashed so we write less to disk.
-    std::unordered_map<std::size_t, std::string> typenames;
+    // keep the type_names hashed so we write less to disk.
+    std::unordered_map<std::size_t, std::string> type_names;
 
     // Logger object associated with the profile_state
     logger_type alloc_logger;
     logger_type dealloc_logger;
+
+    // We need the beginning of the program to compare
+    timestamp_type start_time;
 public:
     // Following clang-tidy's rules to move this to public
     // Disallow copying/assigning/moving actual resources
@@ -127,22 +139,85 @@ public:
     /// Isolating parts of subroutines where extensive dynamic allocation
     /// is being done. In the final output, we should expect the allocations
     /// to be recorded with this tag.
-    static void push_scope(const std::string& s) {
+    void push_scope(const std::string& s) {
         auto hash = std::hash<std::string>{}(s);
-        auto& state = get_state();
-        state.scope_names.emplace(hash, s);
-        state.scopes.push(hash);
+        scope_names.emplace(hash, s);
+        scopes.push(hash);
     }
 
     /// Pops the scope from the stack and returns the context to the user.
-    static std::string pop_scope() {
-        auto& state = get_state();
-        auto hash = state.scopes.top();
-        state.scopes.pop();
-        auto it = state.scope_names.find(hash);
-        if (it == state.scope_names.end())
+    std::string pop_scope() {
+        auto hash = scopes.top();
+        scopes.pop();
+        auto it = scope_names.find(hash);
+        if (it == scope_names.end())
             throw std::runtime_error("Attempted to pop a scope that was never entered. This should never happen.");
         return it->second;
+    }
+
+    template <typename T>
+    void record_allocation(T* p, std::size_t n) {
+        // Updating statistics
+        auto alloc_size = sizeof(T) * n;
+        max_size = std::max(max_size, alloc_size);
+        min_size = std::min(min_size, alloc_size);
+        counts++;
+        std::get<0>(moments) += alloc_size;
+        std::get<1>(moments) += alloc_size * alloc_size;
+
+        auto hash_code = typeid(T).hash_code();
+        if (type_names.find(hash_code) == type_names.end()) [[unlikely]]
+            type_names.emplace(hash_code, get_demangled_name<T>());
+
+        alloc_logger->info(record(scopes.top(), alloc_size, p));
+    }
+
+    template <typename T>
+    void record_deallocation(T* p, std::size_t size) {
+        auto alloc_size = sizeof(T) * size;
+        // We have to deal with the case when two different threads are working in their own type name maps
+        // and allocating/deallocating things from each other's routines.
+        // Then we need to populate the hash codes in here as well.
+        auto hash_code = typeid(T).hash_code();
+        if (type_names.find(hash_code) == type_names.end()) [[unlikely]]
+                    type_names.emplace(hash_code, get_demangled_name<T>());
+
+        dealloc_logger->info(record(scopes.top(), alloc_size, p));
+    }
+
+private:
+    profile_state() noexcept : moments(0, 0), max_size(0), min_size(0), counts(0),
+                               scopes(), start_time(get_current_timestamp()) {
+        scopes.push(GLOBAL_SCOPE_HASH);
+        setup_logger(alloc_logger, "alloc_file_logger_todo", alloc_filename);
+        setup_logger(dealloc_logger, "dealloc_file_logger_todo", dealloc_filename);
+    }
+
+    ~profile_state() {
+        // We write the symbols into the given file names since we don't want to risk throwing in the destructor
+        // by writing to another file that may already exist.
+        // We utilize the JSON library here.
+        json json_scope_map(scope_names);
+        json json_type_map(type_names);
+        std::string scope_dump = json_scope_map.dump();
+        std::string type_dump = json_type_map.dump();
+        end_logger(alloc_logger, scope_dump, type_dump);
+        end_logger(dealloc_logger, scope_dump, type_dump);
+    }
+
+    void setup_logger(logger_type& logger, const std::string& logger_name, const std::string& file_name) {
+        logger = spdlog::basic_logger_st(logger_name, file_name);
+        logger->set_pattern("%v");
+        logger->info("{ \"values\": [");
+    }
+
+    void end_logger(logger_type& logger, const std::string& scope_json, const std::string& type_json) {
+        logger->info("], ");
+        logger->info("\"scopes\": {},", scope_json);
+        logger->info("\"types\": {},", type_json);
+        logger->info("\"start_ts\": {},", start_time);
+        logger->info("}");
+        logger->flush();
     }
 
     template <typename T>
@@ -161,48 +236,19 @@ public:
 #endif
     }
 
-    template <typename T>
-    void record_allocation(T* p, std::size_t n) {
-        // Updating statistics
-        auto alloc_size = sizeof(T) * n;
-        max_size = std::max(max_size, alloc_size);
-        min_size = std::min(min_size, alloc_size);
-        counts++;
-        std::get<0>(moments) += alloc_size;
-        std::get<1>(moments) += alloc_size * alloc_size;
-
-        auto hash_code = typeid(T).hash_code();
-        if (typenames.find(hash_code) == typenames.end()) [[unlikely]]
-            typenames.emplace(hash_code, get_demangled_name<T>());
-
-        alloc_logger->info(record(scopes.top(), alloc_size, p));
-    }
-
-    template <typename T>
-    void record_deallocation(T* p, std::size_t size) {
-        // We have to deal with the case when two different threads are working in their own type name maps
-        // and allocating/deallocating things from each other's routines.
-        // Then we need to populate the hash codes in here as well.
-        auto hash_code = typeid(T).hash_code();
-        if (typenames.find(hash_code) == typenames.end()) [[unlikely]]
-                    typenames.emplace(hash_code, get_demangled_name<T>());
-
-        dealloc_logger->info(record(scopes.top(), size, p));
-    }
-
-private:
-    profile_state() noexcept : moments(0, 0), max_size(0), min_size(0), counts(0), scopes() {
-        scopes.push(GLOBAL_SCOPE_HASH);
-        alloc_logger = spdlog::basic_logger_st("alloc_file_logger", "todo_change_this_alloc.txt");
-        dealloc_logger = spdlog::basic_logger_st("dealloc_file_logger", "todo_change_this_de.txt");
-        alloc_logger->set_pattern("%v");
-        dealloc_logger->set_pattern("%v");
+    static timestamp_type get_current_timestamp() {
+        return std::chrono::system_clock::now().time_since_epoch() / std::chrono::milliseconds(1);
     }
 };
 
 // Exposing the functions to ert:: namespace for ease of use.
-static constexpr auto push_scope = &profile_state::push_scope;
-static constexpr auto pop_scope = &profile_state::pop_scope;
+void push_scope(const std::string& s) {
+    profile_state::get_state().push_scope(s);
+}
+
+std::string pop_scope() {
+    return profile_state::get_state().pop_scope();
+}
 
 template<typename T, typename base_allocator=std::allocator<T>>
 class profile_allocator {
@@ -246,13 +292,11 @@ public:
 
     [[nodiscard]] T* allocate(std::size_t n) {
         T* p = alloc.allocate(n);
-        std::cout << "Creating " << abi::__cxa_demangle(typeid(T).name(), nullptr, nullptr, nullptr) << " at address " << (unsigned long) p << std::endl;
         state.record_allocation(p, n);
         return p;
     }
 
     void deallocate(T* p, std::size_t size) noexcept {
-        std::cout << "Deleting " << abi::__cxa_demangle(typeid(T).name(), nullptr, nullptr, nullptr) << " at address " << (unsigned long) p << std::endl;
         alloc.deallocate(p, size);
         state.record_deallocation(p, size);
     }
@@ -368,7 +412,7 @@ using u32string = basic_string<char32_t>;
 
 } // namespace erata
 
-// Populating fmt with necessary parsers
+// Populating fmt with necessary parsers for records
 namespace fmt {
 template<>
 struct formatter<::ert::profile_state::record> {
@@ -380,7 +424,7 @@ struct formatter<::ert::profile_state::record> {
     template<typename FormatContext>
     auto format(const ::ert::profile_state::record &number, FormatContext &ctx) {
         return format_to(ctx.out(),
-                "{{ \"ts\":{0}, \"sh\": {1}, \"th\": {2}, \"s\": {3}, \"l\": {4} }}",
+                "{{ \"ts\":{0}, \"sh\": {1}, \"th\": {2}, \"s\": {3}, \"l\": {4} }},",
                 number.timestamp, number.scope_hash, number.type_hash, number.size, number.location);
     }
 };
