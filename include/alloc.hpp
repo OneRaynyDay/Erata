@@ -237,7 +237,7 @@ private:
     }
 
     static timestamp_type get_current_timestamp() {
-        return std::chrono::system_clock::now().time_since_epoch() / std::chrono::milliseconds(1);
+        return std::chrono::system_clock::now().time_since_epoch().count();
     }
 };
 
