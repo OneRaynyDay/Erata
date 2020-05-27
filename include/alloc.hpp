@@ -13,11 +13,18 @@
 #include <queue>
 #include <string>
 
+#include <chrono>
 #include <functional>
 #include <typeinfo>
 #include <cxxabi.h>
-// Using spdlog
-// #include "spdlog/spdlog.h"
+
+// Using spdlog to write to files
+#include "spdlog/spdlog.h"
+#include "spdlog/sinks/basic_file_sink.h"
+
+// Using fmt to format record structs into json
+#include "spdlog/fmt/fmt.h"
+#include "spdlog/fmt/bundled/chrono.h"
 
 // TODO remove:
 #include <iostream>
@@ -38,20 +45,24 @@ class profile_state {
     /// TODO: Optimize using alignas
     struct record {
         using location_type = unsigned long;
+        using timestamp_type = unsigned long;
         static_assert(sizeof(location_type) >= sizeof(void*), "Address of variables cannot be stored in current location type.");
 
         // The hashed name of the scope in which this variable is allocated.
-        std::size_t scope;
+        std::size_t scope_hash;
         // The hashed type of object allocated/deallocated.
         std::size_t type_hash;
         // The size of object allocated/deallocated.
         std::size_t size;
         // The address in the heap.
         location_type location;
+        // Timestamp of the struct since creation
+        timestamp_type timestamp;
 
         template <typename T>
-        record(std::size_t scope, std::size_t size, T* ptr) noexcept :
-            scope(scope), type_hash(typeid(T).hash_code()), size(size), location((location_type) ptr) {}
+        record(std::size_t scope_hash, std::size_t size, T* ptr) noexcept :
+            scope_hash(scope_hash), type_hash(typeid(T).hash_code()), size(size), location((location_type) ptr),
+            timestamp(std::chrono::system_clock::now().time_since_epoch() / std::chrono::milliseconds(1)) {}
 
         record() = default;
         record(const record&) = default;
@@ -76,6 +87,12 @@ class profile_state {
     min_type min_size;
     count_type counts;
 
+    /// fields used for processing, formatting and writing data.
+
+    // Logger type is single-threaded for performance. We copy a new
+    // single-threaded logger upon creating a new thread.
+    using logger_type = std::shared_ptr<spdlog::logger>;
+
     // TODO Optimize?
     // The user is allows to change the scope of the profile_state so they can easily visualize which
     // section of the code they're currently running. We take the scope name and hash it here.
@@ -88,13 +105,9 @@ class profile_state {
     // keep the typenames hashed so we write less to disk.
     std::unordered_map<std::size_t, std::string> typenames;
 
-    // Book-keeping for maximum number of records.
-    std::array<record, record_buffer_size> allocate_records;
-    int allocate_record_counter;
-
-    std::array<record, record_buffer_size> deallocate_records;
-    int deallocate_record_counter;
-
+    // Logger object associated with the profile_state
+    logger_type alloc_logger;
+    logger_type dealloc_logger;
 public:
     // Following clang-tidy's rules to move this to public
     // Disallow copying/assigning/moving actual resources
@@ -133,6 +146,22 @@ public:
     }
 
     template <typename T>
+    std::string get_demangled_name() {
+        // Add string type id to map if it doesn't exist.
+#ifdef __GNUG__
+        // Setting it to a value that the fn cannot return
+        int status = -4;
+        char* res = abi::__cxa_demangle(typeid(T).name(), nullptr, nullptr, &status);
+        std::string s(res);
+        // res is allocated on the heap from above.
+        std::free(res);
+        return s;
+#else
+        throw std::runtime_error("Not implemented for non-g++ platform");
+#endif
+    }
+
+    template <typename T>
     void record_allocation(T* p, std::size_t n) {
         // Updating statistics
         auto alloc_size = sizeof(T) * n;
@@ -142,43 +171,32 @@ public:
         std::get<0>(moments) += alloc_size;
         std::get<1>(moments) += alloc_size * alloc_size;
 
-        // Add string type id to map if it doesn't exist.
         auto hash_code = typeid(T).hash_code();
-        if (typenames.find(hash_code) == typenames.end()) {
-#ifdef __GNUG__
-            // Setting it to a value that the fn cannot return
-            int status = -4;
-            char* res = abi::__cxa_demangle(typeid(T).name(), nullptr, nullptr, &status);
-            std::string s(res);
-            typenames.emplace(hash_code, s);
-            // res is allocated on the heap from above.
-            std::free(res);
-#else
-            throw std::runtime_error("Not implemented for non-g++ platform");
-#endif
-        }
+        if (typenames.find(hash_code) == typenames.end()) [[unlikely]]
+            typenames.emplace(hash_code, get_demangled_name<T>());
 
-        // Add to records
-        allocate_records[allocate_record_counter++] = record(scopes.top(), alloc_size, p);
-        if (allocate_record_counter >= record_buffer_size)  [[unlikely]] {
-            throw std::runtime_error("Not implemented flush into file.");
-        }
+        alloc_logger->info(record(scopes.top(), alloc_size, p));
     }
 
     template <typename T>
     void record_deallocation(T* p, std::size_t size) {
-        // Add to records
-        deallocate_records[deallocate_record_counter++] = record(scopes.top(), size, p);
-        if (deallocate_record_counter >= record_buffer_size)  [[unlikely]] {
-            throw std::runtime_error("Not implemented flush into file.");
-        }
+        // We have to deal with the case when two different threads are working in their own type name maps
+        // and allocating/deallocating things from each other's routines.
+        // Then we need to populate the hash codes in here as well.
+        auto hash_code = typeid(T).hash_code();
+        if (typenames.find(hash_code) == typenames.end()) [[unlikely]]
+                    typenames.emplace(hash_code, get_demangled_name<T>());
+
+        dealloc_logger->info(record(scopes.top(), size, p));
     }
 
 private:
-    profile_state() noexcept : moments(0, 0), max_size(0), min_size(0), counts(0),
-                               scopes(),
-                               allocate_record_counter(0), deallocate_record_counter(0) {
+    profile_state() noexcept : moments(0, 0), max_size(0), min_size(0), counts(0), scopes() {
         scopes.push(GLOBAL_SCOPE_HASH);
+        alloc_logger = spdlog::basic_logger_st("alloc_file_logger", "todo_change_this_alloc.txt");
+        dealloc_logger = spdlog::basic_logger_st("dealloc_file_logger", "todo_change_this_de.txt");
+        alloc_logger->set_pattern("%v");
+        dealloc_logger->set_pattern("%v");
     }
 };
 
@@ -349,3 +367,22 @@ using u32string = basic_string<char32_t>;
 } // namespace pmr
 
 } // namespace erata
+
+// Populating fmt with necessary parsers
+namespace fmt {
+template<>
+struct formatter<::ert::profile_state::record> {
+    template<typename ParseContext>
+    constexpr auto parse(ParseContext &ctx) {
+        return ctx.begin();
+    }
+
+    template<typename FormatContext>
+    auto format(const ::ert::profile_state::record &number, FormatContext &ctx) {
+        return format_to(ctx.out(),
+                "{{ \"ts\":{0}, \"sh\": {1}, \"th\": {2}, \"s\": {3}, \"l\": {4} }}",
+                number.timestamp, number.scope_hash, number.type_hash, number.size, number.location);
+    }
+};
+}
+
