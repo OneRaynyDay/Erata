@@ -428,5 +428,5 @@ struct formatter<::ert::profile_state::record> {
                 number.timestamp, number.scope_hash, number.type_hash, number.size, number.location);
     }
 };
-}
 
+} // namespace fmt
