@@ -18,6 +18,12 @@
 #include <typeinfo>
 #include <cxxabi.h>
 
+// Using filesystem to create directories for log files
+#include <filesystem>
+
+// Thread id needed
+#include <thread>
+
 // Using spdlog to write to files
 #include "spdlog/spdlog.h"
 #include "spdlog/sinks/basic_file_sink.h"
@@ -32,6 +38,7 @@
 // TODO remove:
 #include <iostream>
 
+// Including PMR resources
 #include <memory_resource>
 
 namespace ert {
@@ -43,16 +50,38 @@ static constexpr int record_buffer_size = 100;
 // Designate the global scope to be of hash 0.
 static constexpr auto GLOBAL_SCOPE_HASH = 0;
 
-const std::string alloc_filename("todo_change_this_alloc.txt");
-const std::string dealloc_filename("todo_change_this_dealloc.txt");
-
 /// Statically managed state objects for allocators which are trivially copyable and movable.
-/// TODO: Make this thread-safe. This may require a singleton-per-thread thread_local storage design.
+/// TODO: Check that this is thread-safe. This may require a singleton-per-thread thread_local storage design.
+// template <typename logger_type=DEFAULT_LOGGER_TYPE>
 class profile_state {
     /// We need timestamp for both record and the beginning of the program.
     using timestamp_type = unsigned long;
+
     /// Record type used in each memory transaction
     /// TODO: Optimize using alignas
+    // TODO templatize
+    using logger_type = std::shared_ptr<spdlog::logger>;
+
+    // TODO Optimize?
+    // The user is allows to change the scope of the profile_state so they can easily visualize which
+    // section of the code they're currently running. We take the scope name and hash it here.
+    // We'll be writing to disk a lot, so we don't want to serialize a ton of strings, but rather size_t's.
+    std::stack<std::size_t> scopes;
+    std::unordered_map<std::size_t, std::string> scope_names;
+
+    // TODO Optimize?
+    // Storing the cxx abi name mangling dictionary information here. Similar to scope names, we want to
+    // keep the type_names hashed so we write less to disk.
+    std::unordered_map<std::size_t, std::string> type_names;
+
+    // Logger object associated with the profile_state
+    logger_type alloc_logger;
+    logger_type dealloc_logger;
+
+    // We need the beginning of the program to compare
+    timestamp_type start_time;
+
+public:
     struct record {
         using location_type = unsigned long;
         static_assert(sizeof(location_type) >= sizeof(void*), "Address of variables cannot be stored in current location type.");
@@ -78,49 +107,6 @@ class profile_state {
         record& operator=(const record&) = default;
     };
 
-    /// Aggregation types
-    /// averages can be computed with a tuple of (double, unsigned int),
-    /// and stddev can be computed with the square of sum aggregates also in (double, unsigned int)
-    /// currently we calculate up to the 2nd moment.
-    using moment_type = std::tuple<std::size_t, std::size_t>;
-    /// maxes can be computed with a single type std::size_t
-    using max_type = std::size_t;
-    /// mins similarly
-    using min_type = std::size_t;
-    /// count can be represented as unsigned int
-    using count_type = std::size_t;
-
-    // Aggregates computed in O(1) time
-    moment_type moments;
-    max_type max_size;
-    min_type min_size;
-    count_type counts;
-
-    /// fields used for processing, formatting and writing data.
-
-    // Logger type is single-threaded for performance. We copy a new
-    // single-threaded logger upon creating a new thread.
-    using logger_type = std::shared_ptr<spdlog::logger>;
-
-    // TODO Optimize?
-    // The user is allows to change the scope of the profile_state so they can easily visualize which
-    // section of the code they're currently running. We take the scope name and hash it here.
-    // We'll be writing to disk a lot, so we don't want to serialize a ton of strings, but rather size_t's.
-    std::stack<std::size_t> scopes;
-    std::unordered_map<std::size_t, std::string> scope_names;
-
-    // TODO Optimize?
-    // Storing the cxx abi name mangling dictionary information here. Similar to scope names, we want to
-    // keep the type_names hashed so we write less to disk.
-    std::unordered_map<std::size_t, std::string> type_names;
-
-    // Logger object associated with the profile_state
-    logger_type alloc_logger;
-    logger_type dealloc_logger;
-
-    // We need the beginning of the program to compare
-    timestamp_type start_time;
-public:
     // Following clang-tidy's rules to move this to public
     // Disallow copying/assigning/moving actual resources
     // The standard specifies that copy ctor/assignment explicitly declared
@@ -131,7 +117,7 @@ public:
     /// Return the singleton profile_state.
     static profile_state& get_state() noexcept {
         /// Singleton containing state necessary for all profile_allocators
-        static profile_state state;
+        static thread_local profile_state state;
         return state;
     }
 
@@ -159,11 +145,6 @@ public:
     void record_allocation(T* p, std::size_t n) {
         // Updating statistics
         auto alloc_size = sizeof(T) * n;
-        max_size = std::max(max_size, alloc_size);
-        min_size = std::min(min_size, alloc_size);
-        counts++;
-        std::get<0>(moments) += alloc_size;
-        std::get<1>(moments) += alloc_size * alloc_size;
 
         auto hash_code = typeid(T).hash_code();
         if (type_names.find(hash_code) == type_names.end()) [[unlikely]]
@@ -186,11 +167,28 @@ public:
     }
 
 private:
-    profile_state() noexcept : moments(0, 0), max_size(0), min_size(0), counts(0),
-                               scopes(), start_time(get_current_timestamp()) {
+    profile_state() : scopes(), start_time(get_current_timestamp()) {
         scopes.push(GLOBAL_SCOPE_HASH);
-        setup_logger(alloc_logger, "alloc_file_logger_todo", alloc_filename);
-        setup_logger(dealloc_logger, "dealloc_file_logger_todo", dealloc_filename);
+        // thread id cannot be converted to an int easily, so we just hack around it by getting the string repr
+        // (since it supports <<)
+        std::stringstream ss;
+        ss << std::this_thread::get_id();
+        std::string this_id = ss.str();
+
+        // TODO: don't hardcode this
+        std::string dir_path = "erata";
+        if (std::filesystem::exists(dir_path))
+            throw std::runtime_error(fmt::format("Cannot create folder {} because this path already exists.", dir_path));
+        std::filesystem::create_directories(dir_path);
+
+        // TODO We can use std::filesystem here partially
+        std::string alloc_file_name = fmt::format("{}/alloc_{}.json", dir_path, this_id);
+        std::string dealloc_file_name = fmt::format("{}/dealloc_{}.json", dir_path, this_id);
+        std::string alloc_logger_name = fmt::format("alloc_logger_{}", this_id);
+        std::string dealloc_logger_name = fmt::format("dealloc_logger_{}", this_id);
+
+        setup_logger(alloc_logger, alloc_logger_name, alloc_file_name);
+        setup_logger(dealloc_logger, dealloc_logger_name, dealloc_file_name);
     }
 
     ~profile_state() {
@@ -249,6 +247,42 @@ void push_scope(const std::string& s) {
 std::string pop_scope() {
     return profile_state::get_state().pop_scope();
 }
+
+namespace writer {
+
+/// Concepts required for the writers used by profile_state. This allows writing to network
+/// to files, and maybe to other things.
+template<typename T> concept is_writer = requires(T a) {
+    // A mandatory setup stage (can be no-op)
+    // So far, passes the logger name and the output source as string
+    a.setup(std::declval<std::string>(), std::declval<std::string>());
+    // Must be able to write records
+    a.write(std::declval<profile_state::record>());
+    // A mandatory ending stage (can be no-op)
+    // So far, passes the program timestamp, scope map, type map.
+    // TODO: Somehow consolidate this with the API of profile_allocator
+    a.end(std::declval<unsigned long>(),
+          std::declval<std::unordered_map<std::size_t, std::string>>(),
+          std::declval<std::unordered_map<std::size_t, std::string>>());
+};
+
+class file_logger {
+    // Logger type is single-threaded for performance. We copy a new
+    // single-threaded logger upon creating a new thread.
+    using logger_type = std::shared_ptr<spdlog::logger>;
+    logger_type logger;
+public:
+    void write(const profile_state::record& record) const {
+        logger->info(record);
+    }
+};
+
+template <typename T> requires is_writer<T>
+void test_concepts(T t) {
+    // do nothing;
+}
+
+} // namespace writer
 
 template<typename T, typename base_allocator=std::allocator<T>>
 class profile_allocator {

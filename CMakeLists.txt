@@ -9,6 +9,7 @@ set(CMAKE_CXX_FLAGS_DEBUG "-g -O0")
 
 add_subdirectory(src)
 add_subdirectory(tests)
+add_subdirectory(third-party/googletest)
 
 # Git submodule init'ing:
 find_package(Git QUIET)
