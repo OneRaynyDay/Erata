@@ -1,5 +1,5 @@
 # Erata
-Measuring heap fragmentation by providing a modern, header-only C++17 metrics-collecting allocator and corresponding allocator-aware containers.
+Measuring heap fragmentation by providing a modern, header-only C++20 metrics-collecting allocator and corresponding allocator-aware containers.
 
 **NOTE**: The library isn't fully implemented yet. So far, only single-threaded implementation is supported, and g++ is known to be supported.
 
