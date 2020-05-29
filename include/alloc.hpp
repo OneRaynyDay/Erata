@@ -1,4 +1,12 @@
 #pragma once
+
+#define STRINGIFY_(a) #a
+#define STRINGIFY(a) STRINGIFY_(a)
+// Require record type object
+#define DEFAULT_WRITER_TYPE file_logger
+// So far, we only include the single hpp required for writer to prevent code bloat.
+#include STRINGIFY(DEFAULT_WRITER_TYPE.hpp)
+
 // Including all the data structures here so we can typedef in pmr namespace
 #include <array>
 #include <vector>
@@ -24,17 +32,6 @@
 // Thread id needed
 #include <thread>
 
-// Using spdlog to write to files
-#include "spdlog/spdlog.h"
-#include "spdlog/sinks/basic_file_sink.h"
-
-// Using json to stringify ending maps
-#include "nlohmann/json.hpp"
-
-// Using fmt to format record structs into json
-#include "spdlog/fmt/fmt.h"
-#include "spdlog/fmt/bundled/chrono.h"
-
 // TODO remove:
 #include <iostream>
 
@@ -43,70 +40,36 @@
 
 namespace ert {
 
-using json = nlohmann::json;
+/// Using macro-defined writer type
+using default_writer_type = ert::writer::DEFAULT_WRITER_TYPE;
 
-// Keep this many records in the buffer
-static constexpr int record_buffer_size = 100;
 // Designate the global scope to be of hash 0.
 static constexpr auto GLOBAL_SCOPE_HASH = 0;
 
 /// Statically managed state objects for allocators which are trivially copyable and movable.
 /// TODO: Check that this is thread-safe. This may require a singleton-per-thread thread_local storage design.
-// template <typename logger_type=DEFAULT_LOGGER_TYPE>
+template <typename writer_type=default_writer_type>
 class profile_state {
-    /// We need timestamp for both record and the beginning of the program.
-    using timestamp_type = unsigned long;
-
-    /// Record type used in each memory transaction
-    /// TODO: Optimize using alignas
-    // TODO templatize
-    using logger_type = std::shared_ptr<spdlog::logger>;
-
     // TODO Optimize?
     // The user is allows to change the scope of the profile_state so they can easily visualize which
     // section of the code they're currently running. We take the scope name and hash it here.
     // We'll be writing to disk a lot, so we don't want to serialize a ton of strings, but rather size_t's.
     std::stack<std::size_t> scopes;
-    std::unordered_map<std::size_t, std::string> scope_names;
+    scope_map scope_names;
 
     // TODO Optimize?
     // Storing the cxx abi name mangling dictionary information here. Similar to scope names, we want to
     // keep the type_names hashed so we write less to disk.
-    std::unordered_map<std::size_t, std::string> type_names;
+    type_map type_names;
 
-    // Logger object associated with the profile_state
-    logger_type alloc_logger;
-    logger_type dealloc_logger;
+    // Writer object associated with the profile_state
+    writer_type alloc_writer;
+    writer_type dealloc_writer;
 
     // We need the beginning of the program to compare
     timestamp_type start_time;
 
 public:
-    struct record {
-        using location_type = unsigned long;
-        static_assert(sizeof(location_type) >= sizeof(void*), "Address of variables cannot be stored in current location type.");
-
-        // The hashed name of the scope in which this variable is allocated.
-        std::size_t scope_hash;
-        // The hashed type of object allocated/deallocated.
-        std::size_t type_hash;
-        // The size of object allocated/deallocated.
-        std::size_t size;
-        // The address in the heap.
-        location_type location;
-        // Timestamp of the struct since creation
-        timestamp_type timestamp;
-
-        template <typename T>
-        record(std::size_t scope_hash, std::size_t size, T* ptr) noexcept :
-            scope_hash(scope_hash), type_hash(typeid(T).hash_code()), size(size), location((location_type) ptr),
-            timestamp(get_current_timestamp()) {}
-
-        record() = default;
-        record(const record&) = default;
-        record& operator=(const record&) = default;
-    };
-
     // Following clang-tidy's rules to move this to public
     // Disallow copying/assigning/moving actual resources
     // The standard specifies that copy ctor/assignment explicitly declared
@@ -150,7 +113,7 @@ public:
         if (type_names.find(hash_code) == type_names.end()) [[unlikely]]
             type_names.emplace(hash_code, get_demangled_name<T>());
 
-        alloc_logger->info(record(scopes.top(), alloc_size, p));
+        alloc_writer.write(record(scopes.top(), alloc_size, p));
     }
 
     template <typename T>
@@ -163,7 +126,7 @@ public:
         if (type_names.find(hash_code) == type_names.end()) [[unlikely]]
                     type_names.emplace(hash_code, get_demangled_name<T>());
 
-        dealloc_logger->info(record(scopes.top(), alloc_size, p));
+        dealloc_writer.write(record(scopes.top(), alloc_size, p));
     }
 
 private:
@@ -187,35 +150,13 @@ private:
         std::string alloc_logger_name = fmt::format("alloc_logger_{}", this_id);
         std::string dealloc_logger_name = fmt::format("dealloc_logger_{}", this_id);
 
-        setup_logger(alloc_logger, alloc_logger_name, alloc_file_name);
-        setup_logger(dealloc_logger, dealloc_logger_name, dealloc_file_name);
+        alloc_writer.setup(alloc_logger_name, alloc_file_name);
+        dealloc_writer.setup(dealloc_logger_name, dealloc_file_name);
     }
 
     ~profile_state() {
-        // We write the symbols into the given file names since we don't want to risk throwing in the destructor
-        // by writing to another file that may already exist.
-        // We utilize the JSON library here.
-        json json_scope_map(scope_names);
-        json json_type_map(type_names);
-        std::string scope_dump = json_scope_map.dump();
-        std::string type_dump = json_type_map.dump();
-        end_logger(alloc_logger, scope_dump, type_dump);
-        end_logger(dealloc_logger, scope_dump, type_dump);
-    }
-
-    void setup_logger(logger_type& logger, const std::string& logger_name, const std::string& file_name) {
-        logger = spdlog::basic_logger_st(logger_name, file_name);
-        logger->set_pattern("%v");
-        logger->info("{ \"values\": [");
-    }
-
-    void end_logger(logger_type& logger, const std::string& scope_json, const std::string& type_json) {
-        logger->info("], ");
-        logger->info("\"scopes\": {},", scope_json);
-        logger->info("\"types\": {},", type_json);
-        logger->info("\"start_ts\": {},", start_time);
-        logger->info("}");
-        logger->flush();
+        alloc_writer.end(start_time, scope_names, type_names);
+        dealloc_writer.end(start_time, scope_names, type_names);
     }
 
     template <typename T>
@@ -234,55 +175,18 @@ private:
 #endif
     }
 
-    static timestamp_type get_current_timestamp() {
-        return std::chrono::system_clock::now().time_since_epoch().count();
-    }
 };
 
 // Exposing the functions to ert:: namespace for ease of use.
+template <typename T=default_writer_type>
 void push_scope(const std::string& s) {
-    profile_state::get_state().push_scope(s);
+    profile_state<default_writer_type>::get_state().push_scope(s);
 }
 
+template <typename T=default_writer_type>
 std::string pop_scope() {
-    return profile_state::get_state().pop_scope();
+    return profile_state<default_writer_type>::get_state().pop_scope();
 }
-
-namespace writer {
-
-/// Concepts required for the writers used by profile_state. This allows writing to network
-/// to files, and maybe to other things.
-template<typename T> concept is_writer = requires(T a) {
-    // A mandatory setup stage (can be no-op)
-    // So far, passes the logger name and the output source as string
-    a.setup(std::declval<std::string>(), std::declval<std::string>());
-    // Must be able to write records
-    a.write(std::declval<profile_state::record>());
-    // A mandatory ending stage (can be no-op)
-    // So far, passes the program timestamp, scope map, type map.
-    // TODO: Somehow consolidate this with the API of profile_allocator
-    a.end(std::declval<unsigned long>(),
-          std::declval<std::unordered_map<std::size_t, std::string>>(),
-          std::declval<std::unordered_map<std::size_t, std::string>>());
-};
-
-class file_logger {
-    // Logger type is single-threaded for performance. We copy a new
-    // single-threaded logger upon creating a new thread.
-    using logger_type = std::shared_ptr<spdlog::logger>;
-    logger_type logger;
-public:
-    void write(const profile_state::record& record) const {
-        logger->info(record);
-    }
-};
-
-template <typename T> requires is_writer<T>
-void test_concepts(T t) {
-    // do nothing;
-}
-
-} // namespace writer
 
 template<typename T, typename base_allocator=std::allocator<T>>
 class profile_allocator {
@@ -311,7 +215,8 @@ public:
 
     /// Forward all necessary arguments to the nested allocator.
     template <typename... Args>
-    profile_allocator(Args&&... args) noexcept : alloc(std::forward<Args>(args)...), state(profile_state::get_state()){}
+    profile_allocator(Args&&... args) noexcept : alloc(std::forward<Args>(args)...),
+                                                 state(profile_state<default_writer_type>::get_state()) {}
 
     /// Upon copy construction, we must guarrantee that it must be the base allocator
     /// but we allow it to be any type U templatized by base_allocator. To do this we
@@ -321,8 +226,9 @@ public:
     template <typename U, typename A> friend class profile_allocator;
     template <typename U>
     profile_allocator(
-        const profile_allocator<U, typename std::allocator_traits<base_allocator>::template rebind_alloc<U>>& other) noexcept :
-            alloc(other.alloc), state(profile_state::get_state()) {}
+        const profile_allocator<U,
+                                typename std::allocator_traits<base_allocator>::template rebind_alloc<U>>& other) noexcept :
+            alloc(other.alloc), state(profile_state<default_writer_type>::get_state()) {}
 
     [[nodiscard]] T* allocate(std::size_t n) {
         T* p = alloc.allocate(n);
@@ -337,130 +243,9 @@ public:
 
 private:
     base_allocator alloc;
-    profile_state& state;
+    profile_state<default_writer_type>& state;
     // We want to call the underlying allocator type
 };
 
-/// Offer equivalent STL container types.
-template <typename T, typename Alloc=std::allocator<T>>
-using vector = std::vector<T, profile_allocator<T, Alloc>>;
+} // namespace ert
 
-template <typename T, typename Alloc=std::allocator<T>>
-using deque = std::deque<T, profile_allocator<T, Alloc>>;
-
-template <typename T, typename Alloc=std::allocator<T>>
-using forward_list = std::forward_list<T, profile_allocator<T, Alloc>>;
-
-template <typename T, typename Alloc=std::allocator<T>>
-using list = std::list<T, profile_allocator<T, Alloc>>;
-
-template <typename T, typename Alloc=std::allocator<T>>
-using set = std::set<T, profile_allocator<T, Alloc>>;
-
-template <typename T, typename Alloc=std::allocator<T>>
-using map = std::map<T, profile_allocator<T, Alloc>>;
-
-template <typename T, typename Alloc=std::allocator<T>>
-using multiset = std::multiset<T, profile_allocator<T, Alloc>>;
-
-template <typename T, typename Alloc=std::allocator<T>>
-using multimap = std::multimap<T, profile_allocator<T, Alloc>>;
-
-template <typename T, typename Alloc=std::allocator<T>>
-using unordered_set = std::unordered_set<T, profile_allocator<T, Alloc>>;
-
-template <typename T, typename Alloc=std::allocator<T>>
-using unordered_map = std::unordered_map<T, profile_allocator<T, Alloc>>;
-
-template <typename T, typename Alloc=std::allocator<T>>
-using unordered_multiset = std::unordered_multiset<T, profile_allocator<T, Alloc>>;
-
-template <typename T, typename Alloc=std::allocator<T>>
-using unordered_multimap = std::unordered_multimap<T, profile_allocator<T, Alloc>>;
-
-template <typename T, typename Alloc=std::allocator<T>>
-using stack = std::stack<T, profile_allocator<T, Alloc>>;
-
-template <typename T, typename Alloc=std::allocator<T>>
-using queue = std::queue<T, profile_allocator<T, Alloc>>;
-
-template <typename CharT, class Traits = std::char_traits<CharT>, class Alloc = std::allocator<CharT>>
-using basic_string = std::basic_string<CharT, Traits, profile_allocator<CharT, Alloc>>;
-using string = basic_string<char>;
-using wstring = basic_string<wchar_t>;
-using u8string = basic_string<char8_t>;
-using u16string = basic_string<char16_t>;
-using u32string = basic_string<char32_t>;
-
-namespace pmr {
-template <typename T>
-using vector = vector<T, std::pmr::polymorphic_allocator<T>>;
-
-template <typename T>
-using deque = deque<T, std::pmr::polymorphic_allocator<T>>;
-
-template <typename T>
-using forward_list = forward_list<T, std::pmr::polymorphic_allocator<T>>;
-
-template <typename T>
-using list = list<T, std::pmr::polymorphic_allocator<T>>;
-
-template <typename T>
-using set = set<T, std::pmr::polymorphic_allocator<T>>;
-
-template <typename T>
-using map = map<T, std::pmr::polymorphic_allocator<T>>;
-
-template <typename T>
-using multiset = multiset<T, std::pmr::polymorphic_allocator<T>>;
-
-template <typename T>
-using multimap = multimap<T, std::pmr::polymorphic_allocator<T>>;
-
-template <typename T>
-using unordered_set = unordered_set<T, std::pmr::polymorphic_allocator<T>>;
-
-template <typename T>
-using unordered_map = unordered_map<T, std::pmr::polymorphic_allocator<T>>;
-
-template <typename T>
-using unordered_multiset = unordered_multiset<T, std::pmr::polymorphic_allocator<T>>;
-
-template <typename T>
-using unordered_multimap = unordered_multimap<T, std::pmr::polymorphic_allocator<T>>;
-
-template <typename T>
-using stack = stack<T, std::pmr::polymorphic_allocator<T>>;
-
-template <typename T>
-using queue = queue<T, std::pmr::polymorphic_allocator<T>>;
-
-template <typename CharT, class Traits = std::char_traits<CharT>>
-using basic_string = basic_string<CharT, Traits, std::pmr::polymorphic_allocator<CharT>>;
-using string = basic_string<char>;
-using wstring = basic_string<wchar_t>;
-using u8string = basic_string<char8_t>;
-using u16string = basic_string<char16_t>;
-using u32string = basic_string<char32_t>;
-} // namespace pmr
-
-} // namespace erata
-
-// Populating fmt with necessary parsers for records
-namespace fmt {
-template<>
-struct formatter<::ert::profile_state::record> {
-    template<typename ParseContext>
-    constexpr auto parse(ParseContext &ctx) {
-        return ctx.begin();
-    }
-
-    template<typename FormatContext>
-    auto format(const ::ert::profile_state::record &number, FormatContext &ctx) {
-        return format_to(ctx.out(),
-                "{{ \"ts\":{0}, \"sh\": {1}, \"th\": {2}, \"s\": {3}, \"l\": {4} }},",
-                number.timestamp, number.scope_hash, number.type_hash, number.size, number.location);
-    }
-};
-
-} // namespace fmt
