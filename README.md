@@ -12,6 +12,7 @@ To use the allocator, simply copy and include the [header file](https://raw.gith
 
 ```c++
 #include "alloc.hpp"
+#include "stl_containers.hpp"
 
 using namespace ert;
 
