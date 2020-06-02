@@ -17,7 +17,6 @@
 #include "nlohmann/json.hpp"
 
 namespace ert {
-
 namespace writer {
 
 class file_logger {
@@ -62,7 +61,6 @@ namespace {
 }
 
 } // namespace writer
-
 } // namespace ert
 
 // Populating fmt with necessary parsers for records
