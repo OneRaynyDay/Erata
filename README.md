@@ -43,6 +43,35 @@ int main() {
             pmrl.push_back(i);
     }
     ert::pop_scope();
+
+    ert::push_scope("shared_ptr<T>");
+    // shared_ptr examples
+    {
+        ert::shared_ptr<ert::vector<int>> ptr = ert::make_shared<ert::vector<int>>();
+        ert::push_scope("vector");
+        ptr->push_back(1);
+        ptr->push_back(1);
+        ptr->push_back(1);
+        ptr->push_back(1);
+        ert::pop_scope();
+    }
+    // Currently, this prints out 16, 16.
+    fmt::print("size of shared_ptrs : stl: {}, ert: {}", sizeof(std::shared_ptr<int>), sizeof(ert::shared_ptr<int>));
+
+    ert::push_scope("unique_ptr<T>");
+    // shared_ptr examples
+    {
+        ert::unique_ptr<ert::vector<int>> ptr = ert::make_unique<ert::vector<int>>();
+        ert::push_scope("vector");
+        ptr->push_back(1);
+        ptr->push_back(1);
+        ptr->push_back(1);
+        ptr->push_back(1);
+        ert::pop_scope();
+    }
+    // Currently, this prints out 8, 24. Optimizing this is on our TODO list.
+    fmt::print("size of unique_ptrs : stl: {}, ert: {}", sizeof(std::unique_ptr<int>), sizeof(ert::unique_ptr<int>));
+
     return 0;
 }
 ```
@@ -58,4 +87,4 @@ These limitations are listed below:
 
 - The user must use the ert namespace substitutes for stl and smart pointer allocations. Polluting std namespace yields undefined behavior.
 - If we were to override the default allocator, this is only possible right now in `g++` and not `clang`, but users will not have to change namespaces. I will attempt this but it's not cross-compiler supported.
-
+- `ert::unique_ptr`s can no longer be zero-cost because we need to set default deleter to use allocators, specifically `ert::profile_allocator<T, std::allocator<T>>`. So **production memory usage may be slightly different than test usage**.

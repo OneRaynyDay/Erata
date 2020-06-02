@@ -213,10 +213,16 @@ public:
                                   typename std::allocator_traits<base_allocator>::template rebind_alloc<U>> other;
     };
 
+    /// Default Ctor
+    explicit profile_allocator() : alloc(), state(profile_state<default_writer_type>::get_state()) {}
+
     /// Forward all necessary arguments to the nested allocator.
+    /// IMPORTANT: This is a classic example of the perfect forwarding problem, in that if we were to pass in
+    /// another profile_allocator and/or base_allocator that's not declared const, this would be picked first.
     template <typename... Args>
-    profile_allocator(Args&&... args) noexcept : alloc(std::forward<Args>(args)...),
-                                                 state(profile_state<default_writer_type>::get_state()) {}
+    profile_allocator(Args&&... args) noexcept requires (std::is_constructible<base_allocator, Args...>::value) :
+            alloc(std::forward<Args>(args)...),
+            state(profile_state<default_writer_type>::get_state()) {}
 
     /// Upon copy construction, we must guarrantee that it must be the base allocator
     /// but we allow it to be any type U templatized by base_allocator. To do this we
@@ -224,11 +230,19 @@ public:
     /// In addition, to do this, we need to make other profile_allocators friends, since different template instantiations
     /// cannot access each others' private members.
     template <typename U, typename A> friend class profile_allocator;
+
+    // Construct a profile allocator from another profile allocator with the same base_allocator but with different type.
     template <typename U>
     profile_allocator(
         const profile_allocator<U,
                                 typename std::allocator_traits<base_allocator>::template rebind_alloc<U>>& other) noexcept :
             alloc(other.alloc), state(profile_state<default_writer_type>::get_state()) {}
+
+    // Construct a profile allocator from its base_allocator with a different type.
+    template <typename U>
+    profile_allocator(
+        const typename std::allocator_traits<base_allocator>::template rebind_alloc<U>& other) noexcept :
+            alloc(other), state(profile_state<default_writer_type>::get_state()) {}
 
     [[nodiscard]] T* allocate(std::size_t n) {
         T* p = alloc.allocate(n);

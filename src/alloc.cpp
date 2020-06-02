@@ -1,6 +1,8 @@
 #include "alloc.hpp"
+#include "pointer_types.hpp"
 #include "stl_containers.hpp"
 #include <list>
+#include <vector>
 
 int main() {
     ert::push_scope("stl");
@@ -29,6 +31,36 @@ int main() {
             pmrl.push_back(i);
     }
     ert::pop_scope();
+
+    ert::push_scope("shared_ptr<T>");
+    // shared_ptr examples
+    {
+        ert::shared_ptr<ert::vector<int>> ptr = ert::make_shared<ert::vector<int>>();
+        ert::push_scope("vector");
+        ptr->push_back(1);
+        ptr->push_back(1);
+        ptr->push_back(1);
+        ptr->push_back(1);
+        ert::pop_scope();
+    }
+    ert::pop_scope();
+    fmt::print("size of shared_ptrs : stl: {}, ert: {}", sizeof(std::shared_ptr<int>), sizeof(ert::shared_ptr<int>));
+
+    ert::push_scope("unique_ptr<T>");
+    // shared_ptr examples
+    {
+        ert::unique_ptr<ert::vector<int>> ptr = ert::make_unique<ert::vector<int>>();
+        ert::push_scope("vector");
+        ptr->push_back(1);
+        ptr->push_back(1);
+        ptr->push_back(1);
+        ptr->push_back(1);
+        ert::pop_scope();
+    }
+    ert::pop_scope();
+    // Currently, this prints out 8, 24. Optimizing this is on our TODO list.
+    fmt::print("size of unique_ptrs : stl: {}, ert: {}", sizeof(std::unique_ptr<int>), sizeof(ert::unique_ptr<int>));
+
     ert::writer::test_concepts(ert::writer::file_logger());
     return 0;
 }
