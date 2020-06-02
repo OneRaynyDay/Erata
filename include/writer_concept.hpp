@@ -17,8 +17,8 @@ template<typename T> concept is_writer = requires(T a,
                                                   scope_map scope,
                                                   type_map type) {
     // A mandatory setup stage (can be no-op)
-    // So far, passes the logger name and the output source as string
-    a.setup(str, str);
+    // So far, passes some kind of string tag
+    a.setup(str);
     // Must be able to write records
     a.write(record);
     // A mandatory ending stage (can be no-op)

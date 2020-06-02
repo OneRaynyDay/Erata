@@ -12,18 +12,23 @@ struct test_writer {
     int num_writes;
     bool is_end;
 
-    test_writer() : is_setup(false), num_writes(0), is_end(false) {}
+    record latest_record;
 
-    void setup(const std::string& writer_name, const std::string& file_name) {
+    test_writer() : is_setup(false), num_writes(0), is_end(false) {}
+    test_writer(const test_writer&) = default;
+    test_writer& operator=(const test_writer&) = default;
+
+    void setup(const std::string& writer_name) {
         // No-op
         is_setup = true;
     }
 
-    void write(const record& record) const {
+    void write(const record& record) {
         num_writes++;
+        latest_record = record;
     }
 
-    void end(const timestamp_type& ts, const scope_map& scope_names, const type_map& type_names) const {
+    void end(const timestamp_type& ts, const scope_map& scope_names, const type_map& type_names) {
         is_end = true;
     }
 };

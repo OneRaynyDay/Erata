@@ -27,9 +27,33 @@ class file_logger {
 
     logger_type logger;
 public:
-    // This is technically our constructor. This is bad practice to put a setup() function outside
-    // of the constructor but we want a unified interface
-    void setup(const std::string& logger_name, const std::string& file_name) {
+    file_logger() = default;
+    file_logger(const file_logger&) = default;
+    file_logger& operator=(const file_logger&) = default;
+
+    std::string get_tid() {
+        // thread id cannot be converted to an int easily, so we just hack around it by getting the string repr
+        // (since it supports <<)
+        std::stringstream ss;
+        ss << std::this_thread::get_id();
+        return ss.str();
+    }
+
+    /// Passes in a tag (so far only denoting whether this is an alloc/dealloc type writer to construct internals.
+    /// NOTE: This is technically our constructor. This is bad practice to put a setup() function outside
+    /// of the constructor but we want a unified interface
+    void setup(const std::string& tag) {
+        auto this_id = get_tid();
+        // TODO: don't hardcode this
+        std::string dir_path = "erata";
+        if (std::filesystem::exists(dir_path))
+            throw std::runtime_error(fmt::format("Cannot create folder {} because this path already exists.", dir_path));
+        std::filesystem::create_directories(dir_path);
+
+        // TODO We can use std::filesystem here partially
+        std::string file_name = fmt::format("{}/{}_{}.json", dir_path, tag, this_id);
+        std::string logger_name = fmt::format("{}_logger_{}", tag, this_id);
+
         logger = spdlog::basic_logger_st(logger_name, file_name);
         logger->set_pattern("%v");
         logger->info("{ \"values\": [");

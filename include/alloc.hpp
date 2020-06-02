@@ -3,7 +3,9 @@
 #define STRINGIFY_(a) #a
 #define STRINGIFY(a) STRINGIFY_(a)
 // Require record type object
+#ifndef DEFAULT_WRITER_TYPE
 #define DEFAULT_WRITER_TYPE file_logger
+#endif
 // So far, we only include the single hpp required for writer to prevent code bloat.
 #include STRINGIFY(DEFAULT_WRITER_TYPE.hpp)
 
@@ -37,6 +39,9 @@
 
 // Including PMR resources
 #include <memory_resource>
+
+// Using fmt to format record structs into json
+#include "spdlog/fmt/fmt.h"
 
 namespace ert {
 
@@ -77,6 +82,13 @@ public:
     profile_state(const profile_state&) = delete;
     profile_state& operator=(const profile_state&) = delete;
 
+    /// Getters and setters for writers
+    // Scott Meyers - avoid returning handles to members
+    writer_type get_alloc_writer() { return alloc_writer; }
+    writer_type get_dealloc_writer() { return dealloc_writer; }
+    void set_alloc_writer(const writer_type& writer) { alloc_writer = writer; }
+    void set_dealloc_writer(const writer_type& writer) { dealloc_writer = writer; }
+
     /// Return the singleton profile_state.
     static profile_state& get_state() noexcept {
         /// Singleton containing state necessary for all profile_allocators
@@ -94,14 +106,18 @@ public:
         scopes.push(hash);
     }
 
+    std::string get_current_scope() {
+        auto it = scope_names.find(scopes.top());
+        if (it == scope_names.end()) [[unlikely]]
+            throw std::runtime_error("The current scope hash isn't in the scope name map. This should never happen.");
+        return it->second;
+    }
+
     /// Pops the scope from the stack and returns the context to the user.
     std::string pop_scope() {
-        auto hash = scopes.top();
+        auto scope = get_current_scope();
         scopes.pop();
-        auto it = scope_names.find(hash);
-        if (it == scope_names.end())
-            throw std::runtime_error("Attempted to pop a scope that was never entered. This should never happen.");
-        return it->second;
+        return scope;
     }
 
     template <typename T>
@@ -132,26 +148,8 @@ public:
 private:
     profile_state() : scopes(), start_time(get_current_timestamp()) {
         scopes.push(GLOBAL_SCOPE_HASH);
-        // thread id cannot be converted to an int easily, so we just hack around it by getting the string repr
-        // (since it supports <<)
-        std::stringstream ss;
-        ss << std::this_thread::get_id();
-        std::string this_id = ss.str();
-
-        // TODO: don't hardcode this
-        std::string dir_path = "erata";
-        if (std::filesystem::exists(dir_path))
-            throw std::runtime_error(fmt::format("Cannot create folder {} because this path already exists.", dir_path));
-        std::filesystem::create_directories(dir_path);
-
-        // TODO We can use std::filesystem here partially
-        std::string alloc_file_name = fmt::format("{}/alloc_{}.json", dir_path, this_id);
-        std::string dealloc_file_name = fmt::format("{}/dealloc_{}.json", dir_path, this_id);
-        std::string alloc_logger_name = fmt::format("alloc_logger_{}", this_id);
-        std::string dealloc_logger_name = fmt::format("dealloc_logger_{}", this_id);
-
-        alloc_writer.setup(alloc_logger_name, alloc_file_name);
-        dealloc_writer.setup(dealloc_logger_name, dealloc_file_name);
+        alloc_writer.setup("alloc");
+        dealloc_writer.setup("dealloc");
     }
 
     ~profile_state() {
