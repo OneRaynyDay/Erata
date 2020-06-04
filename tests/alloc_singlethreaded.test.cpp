@@ -11,7 +11,7 @@ struct test_struct {
     int* ptr;
 };
 
-class raw_allocator_tests : public testing::Test {
+class test_base : public testing::Test {
     virtual void SetUp() {
         auto& state = ert::profile_state<ert::default_writer_type>::get_state();
         auto alloc_writer = ert::writer::test_writer();
@@ -25,18 +25,13 @@ class raw_allocator_tests : public testing::Test {
     }
 };
 
-class stl_container_tests : public testing::Test {
-    virtual void SetUp() {
-        auto& state = ert::profile_state<ert::default_writer_type>::get_state();
-        auto alloc_writer = ert::writer::test_writer();
-        auto dealloc_writer = ert::writer::test_writer();
+class raw_allocator_tests : public test_base {
+};
 
-        alloc_writer.setup("alloc_test");
-        dealloc_writer.setup("dealloc_test");
+class stl_container_tests : public test_base {
+};
 
-        state.set_alloc_writer(alloc_writer);
-        state.set_dealloc_writer(dealloc_writer);
-    }
+class smart_pointer_tests : public test_base {
 };
 
 
@@ -238,24 +233,125 @@ TEST_F(stl_container_tests, allocate_lists) {
 }
 
 TEST_F(stl_container_tests, allocate_maps) {
-    ASSERT_EQ(1, 1);
+    auto &state = ert::profile_state<ert::default_writer_type>::get_state();
+
+    int counter = 1;
+    auto increase_and_check = [&] < typename MapType > (MapType & m, int pre_calc_size) {
+        m.emplace(counter, counter);
+        auto alloc_array_record = state.get_alloc_writer().latest_record;
+        // Because we don't know the growth ratio of vectors, we can't make
+        // simple assumptions to use ASSERT_EQ even though 2^n seems to be
+        // the common implementation right now.
+        ASSERT_EQ(alloc_array_record.size, pre_calc_size);
+        counter++;
+    };
+
+    // The writer must've been set up at the beginning of the program.
+    ASSERT_EQ(state.get_alloc_writer().is_setup, true);
+    {
+        int last_size = 0;
+        auto expected_size = 0;
+        // Allocate map<int>
+        {
+            ert::map<int, int> m;
+            m.emplace(counter, counter);
+            counter++;
+
+            auto alloc_array_record = state.get_alloc_writer().latest_record;
+            expected_size = alloc_array_record.size;
+            for (int i = 0; i < 100; i++) {
+                ASSERT_EQ(state.get_alloc_writer().num_writes, i + 1);
+                increase_and_check(m, expected_size);
+            }
+            ASSERT_EQ(state.get_dealloc_writer().num_writes, 0);
+        }
+        // We inserted 101 elements.
+        ASSERT_EQ(state.get_dealloc_writer().num_writes, 101);
+        ASSERT_GE(state.get_dealloc_writer().latest_record.size, expected_size);
+    }
+    {
+        int last_size = 0;
+        auto expected_size = 0;
+        // Allocate pmr::map<int>
+        {
+            char buffer[30000]{};
+            ert::pmr::monotonic_buffer_resource rsrc{std::data(buffer), std::size(buffer)};
+            ert::pmr::map<int, int> m(&rsrc);
+            m.emplace(counter, counter);
+            counter++;
+
+            auto alloc_array_record = state.get_alloc_writer().latest_record;
+            expected_size = alloc_array_record.size;
+            for (int i = 0; i < 100; i++) {
+                // We already inserted 101 elements.
+                ASSERT_EQ(state.get_alloc_writer().num_writes, i + 1 + 101);
+                increase_and_check(m, expected_size);
+            }
+        }
+        // We already inserted 101 elements. We then inserted 101 elements.
+        ASSERT_EQ(state.get_dealloc_writer().num_writes, 101 + 101);
+        ASSERT_GE(state.get_dealloc_writer().latest_record.size, expected_size);
+    }
+}
+
+TEST_F(stl_container_tests, instantiate_all_stl_containers) {
+    { ert::array<int, 10> _a {}; }
+    { ert::vector<int> _a {}; }
+    { ert::deque<int> _a {}; }
+    { ert::forward_list<int> _a {}; }
+    { ert::list<int> _a {}; }
+    { ert::set<int> _a {}; }
+    { ert::multiset<int> _a {}; }
+    { ert::map<int, int> _a {}; }
+    { ert::multimap<int, int> _a {}; }
+    { ert::unordered_set<int> _a {}; }
+    { ert::unordered_multiset<int> _a {}; }
+    { ert::unordered_map<int, int> _a {}; }
+    { ert::unordered_multimap <int, int> _a {}; }
+    { ert::stack<int> _a {}; }
+    { ert::queue<int> _a {}; }
+    { ert::string _a {}; }
+    { ert::wstring _a {}; }
+    { ert::u8string _a {}; }
+    { ert::u16string _a {}; }
+    { ert::u32string _a {}; }
+}
+
+TEST_F(stl_container_tests, instantiate_pmr_stl_containers) {
+    { ert::pmr::vector<int> _a {}; }
+    { ert::pmr::deque<int> _a {}; }
+    { ert::pmr::forward_list<int> _a {}; }
+    { ert::pmr::list<int> _a {}; }
+    { ert::pmr::set<int> _a {}; }
+    { ert::pmr::multiset<int> _a {}; }
+    { ert::pmr::map<int, int> _a {}; }
+    { ert::pmr::multimap<int, int> _a {}; }
+    { ert::pmr::unordered_set<int> _a {}; }
+    { ert::pmr::unordered_multiset<int> _a {}; }
+    { ert::pmr::unordered_map<int, int> _a {}; }
+    { ert::pmr::unordered_multimap <int, int> _a {}; }
+    { ert::pmr::string _a {}; }
+    { ert::pmr::wstring _a {}; }
+    { ert::pmr::u8string _a {}; }
+    { ert::pmr::u16string _a {}; }
+    { ert::pmr::u32string _a {}; }
 }
 // ===
 
 // === Smart pointer tests ===
-TEST(smart_ptr_test, make_shared) {
+TEST_F(smart_pointer_tests, make_shared) {
+
+}
+
+TEST_F(smart_pointer_tests, allocate_shared) {
     ASSERT_EQ(1, 1);
 }
 
-TEST(smart_ptr_test, allocate_shared) {
+TEST_F(smart_pointer_tests, make_unique) {
     ASSERT_EQ(1, 1);
 }
 
-TEST(smart_ptr_test, make_unique) {
-    ASSERT_EQ(1, 1);
-}
-
-TEST(smart_ptr_test, allocate_unique) {
+TEST_F(smart_pointer_tests, allocate_unique) {
     ASSERT_EQ(1, 1);
 }
 // ===
