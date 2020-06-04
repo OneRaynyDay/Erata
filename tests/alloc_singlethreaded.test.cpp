@@ -1,5 +1,6 @@
 #define DEFAULT_WRITER_TYPE test_writer
 #include "alloc.hpp"
+#include "stl_containers.hpp"
 #include "gtest/gtest.h"
 
 namespace {
@@ -24,10 +25,25 @@ class raw_allocator_tests : public testing::Test {
     }
 };
 
+class stl_container_tests : public testing::Test {
+    virtual void SetUp() {
+        auto& state = ert::profile_state<ert::default_writer_type>::get_state();
+        auto alloc_writer = ert::writer::test_writer();
+        auto dealloc_writer = ert::writer::test_writer();
+
+        alloc_writer.setup("alloc_test");
+        dealloc_writer.setup("dealloc_test");
+
+        state.set_alloc_writer(alloc_writer);
+        state.set_dealloc_writer(dealloc_writer);
+    }
+};
+
+
 TEST_F(raw_allocator_tests, allocate_simple_objects) {
     auto& state = ert::profile_state<ert::default_writer_type>::get_state();
     // The writer must've been set up at the beginning of the program.
-    EXPECT_EQ(state.get_alloc_writer().is_setup, true);
+    ASSERT_EQ(state.get_alloc_writer().is_setup, true);
 
     // Allocate 2 ints
     ert::profile_allocator<int, std::allocator<int>> alloc;
@@ -35,62 +51,62 @@ TEST_F(raw_allocator_tests, allocate_simple_objects) {
     auto alloc_int_record = state.get_alloc_writer().latest_record;
 
     // We wrote once since allocate called once
-    EXPECT_EQ(state.get_alloc_writer().num_writes, 1);
+    ASSERT_EQ(state.get_alloc_writer().num_writes, 1);
     // Deallocate hasn't been called yet
-    EXPECT_EQ(state.get_dealloc_writer().num_writes, 0);
+    ASSERT_EQ(state.get_dealloc_writer().num_writes, 0);
     // We have 2 ints, each of size 4.
-    EXPECT_EQ(alloc_int_record.size, sizeof(int) * 2);
+    ASSERT_EQ(alloc_int_record.size, sizeof(int) * 2);
     // Hashcode to double check the type is correct.
-    EXPECT_EQ(alloc_int_record.type_hash, typeid(int).hash_code());
+    ASSERT_EQ(alloc_int_record.type_hash, typeid(int).hash_code());
 
     // Deallocate 2 ints from previous state
     alloc.deallocate(p, 2);
     auto dealloc_int_record = state.get_dealloc_writer().latest_record;
 
     // We did not write again to alloc writer.
-    EXPECT_EQ(state.get_alloc_writer().num_writes, 1);
-    EXPECT_EQ(state.get_dealloc_writer().num_writes, 1);
+    ASSERT_EQ(state.get_alloc_writer().num_writes, 1);
+    ASSERT_EQ(state.get_dealloc_writer().num_writes, 1);
     // We have 2 ints, each of size 4.
-    EXPECT_EQ(dealloc_int_record.size, sizeof(int) * 2);
+    ASSERT_EQ(dealloc_int_record.size, sizeof(int) * 2);
     // Hashcode to double check the type is correct.
-    EXPECT_EQ(dealloc_int_record.type_hash, typeid(int).hash_code());
+    ASSERT_EQ(dealloc_int_record.type_hash, typeid(int).hash_code());
 }
 
 TEST_F(raw_allocator_tests, allocate_structs_classes) {
     auto& state = ert::profile_state<ert::default_writer_type>::get_state();
     // The writer must've been set up at the beginning of the program.
-    EXPECT_EQ(state.get_alloc_writer().is_setup, true);
+    ASSERT_EQ(state.get_alloc_writer().is_setup, true);
     // Allocate 2 ints
     ert::profile_allocator<test_struct, std::allocator<test_struct>> alloc;
     auto p = alloc.allocate(10);
     auto alloc_struct_record = state.get_alloc_writer().latest_record;
 
     // We wrote once since allocate called once
-    EXPECT_EQ(state.get_alloc_writer().num_writes, 1);
+    ASSERT_EQ(state.get_alloc_writer().num_writes, 1);
     // Deallocate hasn't been called yet
-    EXPECT_EQ(state.get_dealloc_writer().num_writes, 0);
+    ASSERT_EQ(state.get_dealloc_writer().num_writes, 0);
     // We have 2 ints, each of size 4.
-    EXPECT_EQ(alloc_struct_record.size, sizeof(test_struct) * 10);
+    ASSERT_EQ(alloc_struct_record.size, sizeof(test_struct) * 10);
     // Hashcode to double check the type is correct.
-    EXPECT_EQ(alloc_struct_record.type_hash, typeid(test_struct).hash_code());
+    ASSERT_EQ(alloc_struct_record.type_hash, typeid(test_struct).hash_code());
 
     // Deallocate 2 ints from previous state
     alloc.deallocate(p, 10);
     auto dealloc_struct_record = state.get_dealloc_writer().latest_record;
 
     // We did not write again to alloc writer.
-    EXPECT_EQ(state.get_alloc_writer().num_writes, 1);
-    EXPECT_EQ(state.get_dealloc_writer().num_writes, 1);
+    ASSERT_EQ(state.get_alloc_writer().num_writes, 1);
+    ASSERT_EQ(state.get_dealloc_writer().num_writes, 1);
     // We have 2 ints, each of size 4.
-    EXPECT_EQ(dealloc_struct_record.size, sizeof(test_struct) * 10);
+    ASSERT_EQ(dealloc_struct_record.size, sizeof(test_struct) * 10);
     // Hashcode to double check the type is correct.
-    EXPECT_EQ(dealloc_struct_record.type_hash, typeid(test_struct).hash_code());
+    ASSERT_EQ(dealloc_struct_record.type_hash, typeid(test_struct).hash_code());
 }
 
 TEST_F(raw_allocator_tests, allocate_arrays) {
     auto& state = ert::profile_state<ert::default_writer_type>::get_state();
     // The writer must've been set up at the beginning of the program.
-    EXPECT_EQ(state.get_alloc_writer().is_setup, true);
+    ASSERT_EQ(state.get_alloc_writer().is_setup, true);
     // Allocate int arrays of size 10
     ert::profile_allocator<int[10], std::allocator<int[10]>> alloc;
     // allocate 5 of the int arrays (50 ints)
@@ -98,56 +114,149 @@ TEST_F(raw_allocator_tests, allocate_arrays) {
     auto alloc_array_record = state.get_alloc_writer().latest_record;
 
     // We wrote once since allocate called once
-    EXPECT_EQ(state.get_alloc_writer().num_writes, 1);
+    ASSERT_EQ(state.get_alloc_writer().num_writes, 1);
     // Deallocate hasn't been called yet
-    EXPECT_EQ(state.get_dealloc_writer().num_writes, 0);
+    ASSERT_EQ(state.get_dealloc_writer().num_writes, 0);
     // We have 2 ints, each of size 4.
-    EXPECT_EQ(alloc_array_record.size, sizeof(int[10]) * 5);
+    ASSERT_EQ(alloc_array_record.size, sizeof(int[10]) * 5);
     // Hashcode to double check the type is correct.
-    EXPECT_EQ(alloc_array_record.type_hash, typeid(int[10]).hash_code());
+    ASSERT_EQ(alloc_array_record.type_hash, typeid(int[10]).hash_code());
 
     alloc.deallocate(p, 5);
     auto dealloc_array_record = state.get_dealloc_writer().latest_record;
 
     // We did not write again to alloc writer.
-    EXPECT_EQ(state.get_alloc_writer().num_writes, 1);
-    EXPECT_EQ(state.get_dealloc_writer().num_writes, 1);
+    ASSERT_EQ(state.get_alloc_writer().num_writes, 1);
+    ASSERT_EQ(state.get_dealloc_writer().num_writes, 1);
     // We have 2 ints, each of size 4.
-    EXPECT_EQ(dealloc_array_record.size, sizeof(int[10]) * 5);
+    ASSERT_EQ(dealloc_array_record.size, sizeof(int[10]) * 5);
     // Hashcode to double check the type is correct.
-    EXPECT_EQ(dealloc_array_record.type_hash, typeid(int[10]).hash_code());
+    ASSERT_EQ(dealloc_array_record.type_hash, typeid(int[10]).hash_code());
 }
 // ===
 
 // === STL container tests ===
-TEST(stl_container_test, allocate_vectors) {
-    EXPECT_EQ(1, 1);
+TEST_F(stl_container_tests, allocate_vectors) {
+    auto& state = ert::profile_state<ert::default_writer_type>::get_state();
+
+    auto increase_and_check = [&]<typename VecType>(VecType& v) {
+        v.push_back(1);
+        auto alloc_array_record = state.get_alloc_writer().latest_record;
+        // Because we don't know the growth ratio of vectors, we can't make
+        // simple assumptions to use ASSERT_EQ even though 2^n seems to be
+        // the common implementation right now.
+        ASSERT_GE(alloc_array_record.size, v.size() * sizeof(int));
+        ASSERT_GE(v.capacity() * sizeof(int), alloc_array_record.size);
+    };
+
+    // The writer must've been set up at the beginning of the program.
+    ASSERT_EQ(state.get_alloc_writer().is_setup, true);
+    {
+        // realloc causes there to only be one write to deallocate.
+        ASSERT_EQ(state.get_dealloc_writer().num_writes, 0);
+        int last_size = 0;
+        // Allocate vector<int>
+        {
+            ert::vector<int> v;
+            for (int i = 0; i < 100; i++)
+                increase_and_check(v);
+            last_size = state.get_alloc_writer().latest_record.size;
+        }
+        // The memory gets deallocated everytime.
+        ASSERT_GE(state.get_dealloc_writer().latest_record.size, last_size);
+    }
+    {
+        int last_size = 0;
+        // Allocate vector<int>
+        {
+            char buffer[1024]{};
+            std::pmr::monotonic_buffer_resource rsrc{std::data(buffer), std::size(buffer)};
+            ert::pmr::vector<int> v(&rsrc);
+            for (int i = 0; i < 100; i++)
+                increase_and_check(v);
+            last_size = state.get_alloc_writer().latest_record.size;
+        }
+        ASSERT_GE(state.get_dealloc_writer().latest_record.size, last_size);
+    }
 }
 
-TEST(stl_container_test, allocate_lists) {
-    EXPECT_EQ(1, 1);
+TEST_F(stl_container_tests, allocate_lists) {
+    auto &state = ert::profile_state<ert::default_writer_type>::get_state();
+
+    auto increase_and_check = [&] < typename ListType > (ListType & v, int
+    pre_calc_size) {
+        v.push_back(1);
+        auto alloc_array_record = state.get_alloc_writer().latest_record;
+        // Because we don't know the growth ratio of vectors, we can't make
+        // simple assumptions to use ASSERT_EQ even though 2^n seems to be
+        // the common implementation right now.
+        ASSERT_EQ(alloc_array_record.size, pre_calc_size);
+    };
+
+    // The writer must've been set up at the beginning of the program.
+    ASSERT_EQ(state.get_alloc_writer().is_setup, true);
+    {
+        int last_size = 0;
+        auto expected_size = 0;
+        // Allocate vector<int>
+        {
+            ert::list<int> v;
+            v.push_back(1);
+            auto alloc_array_record = state.get_alloc_writer().latest_record;
+            expected_size = alloc_array_record.size;
+            for (int i = 0; i < 100; i++) {
+                ASSERT_EQ(state.get_alloc_writer().num_writes, i + 1);
+                increase_and_check(v, expected_size);
+            }
+            ASSERT_EQ(state.get_dealloc_writer().num_writes, 0);
+        }
+        // We inserted 101 elements.
+        ASSERT_EQ(state.get_dealloc_writer().num_writes, 101);
+        ASSERT_GE(state.get_dealloc_writer().latest_record.size, expected_size);
+    }
+    {
+        int last_size = 0;
+        auto expected_size = 0;
+        // Allocate pmr::vector<int>
+        {
+            char buffer[30000]{};
+            ert::pmr::monotonic_buffer_resource rsrc{std::data(buffer), std::size(buffer)};
+            ert::pmr::list<int> v(&rsrc);
+            v.push_back(1);
+            auto alloc_array_record = state.get_alloc_writer().latest_record;
+            expected_size = alloc_array_record.size;
+            for (int i = 0; i < 100; i++) {
+                // We already inserted 101 elements.
+                ASSERT_EQ(state.get_alloc_writer().num_writes, i + 1 + 101);
+                increase_and_check(v, expected_size);
+            }
+        }
+        // We already inserted 101 elements. We then inserted 101 elements.
+        ASSERT_EQ(state.get_dealloc_writer().num_writes, 101 + 101);
+        ASSERT_GE(state.get_dealloc_writer().latest_record.size, expected_size);
+    }
 }
 
-TEST(stl_container_test, allocate_maps) {
-    EXPECT_EQ(1, 1);
+TEST_F(stl_container_tests, allocate_maps) {
+    ASSERT_EQ(1, 1);
 }
 // ===
 
 // === Smart pointer tests ===
 TEST(smart_ptr_test, make_shared) {
-    EXPECT_EQ(1, 1);
+    ASSERT_EQ(1, 1);
 }
 
 TEST(smart_ptr_test, allocate_shared) {
-    EXPECT_EQ(1, 1);
+    ASSERT_EQ(1, 1);
 }
 
 TEST(smart_ptr_test, make_unique) {
-    EXPECT_EQ(1, 1);
+    ASSERT_EQ(1, 1);
 }
 
 TEST(smart_ptr_test, allocate_unique) {
-    EXPECT_EQ(1, 1);
+    ASSERT_EQ(1, 1);
 }
 // ===
 }

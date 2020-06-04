@@ -21,7 +21,7 @@ int main() {
     // PMR examples
     {
         char buffer[1024]{};
-        std::pmr::monotonic_buffer_resource rsrc{std::data(buffer), std::size(buffer)};
+        ert::pmr::monotonic_buffer_resource rsrc{std::data(buffer), std::size(buffer)};
         ert::pmr::vector<int> pmrv(&rsrc);
         for (int i = 0; i < 10; i++)
             pmrv.push_back(i);
