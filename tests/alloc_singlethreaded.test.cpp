@@ -1,14 +1,28 @@
 #define DEFAULT_WRITER_TYPE test_writer
 #include "alloc.hpp"
 #include "stl_containers.hpp"
+#include "pointer_types.hpp"
 #include "gtest/gtest.h"
 
-namespace {
 // === Raw allocator tests ===
 struct test_struct {
     std::string s;
     int x;
     int* ptr;
+};
+
+template <typename T>
+class test_allocator : public std::allocator<T> {
+public:
+    test_allocator() = default;
+
+    template <typename U>
+    test_allocator(const test_allocator<U>& other) : std::allocator<T>(other){}
+
+    template<class U>
+    struct rebind {
+        typedef test_allocator<U> other;
+    };
 };
 
 class test_base : public testing::Test {
@@ -34,6 +48,20 @@ class stl_container_tests : public test_base {
 class smart_pointer_tests : public test_base {
 };
 
+TEST(allocator_construction_tests, create_allocator) {
+    // Default construction
+    ert::profile_allocator<int, std::allocator<int>> alloc_1;
+
+    // Copy construction
+    ert::profile_allocator<int, std::allocator<int>> alloc_2(alloc_1);
+
+    // Copy construction from a different type
+    ert::profile_allocator<double, std::allocator<double>> alloc_3(alloc_1);
+
+    // Forwarding arguments (calling copy ctor of base)
+    ert::profile_allocator<double> alloc_4(std::allocator<double>());
+    ert::profile_allocator<double, test_allocator<double>> alloc_5(test_allocator<double>());
+}
 
 TEST_F(raw_allocator_tests, allocate_simple_objects) {
     auto& state = ert::profile_state<ert::default_writer_type>::get_state();
@@ -315,6 +343,23 @@ TEST_F(stl_container_tests, instantiate_all_stl_containers) {
     { ert::u8string _a {}; }
     { ert::u16string _a {}; }
     { ert::u32string _a {}; }
+
+    // Explicitly pass in the allocator
+    { ert::array<int, 10> _a {}; }
+    { ert::vector<int, test_allocator<int>> _a {}; }
+    { ert::deque<int, test_allocator<int>> _a {}; }
+    { ert::forward_list<int, test_allocator<int>> _a {}; }
+    { ert::list<int, test_allocator<int>> _a {}; }
+    { ert::set<int, std::less<int>, test_allocator<int>> _a {}; }
+    { ert::multiset<int, std::less<int>, test_allocator<int>> _a {}; }
+    { ert::map<int, int, std::less<int>, test_allocator<std::pair<const int, int>>> _a {}; }
+    { ert::multimap<int, int, std::less<int>, test_allocator<std::pair<const int, int>>> _a {}; }
+    { ert::unordered_set<int, std::hash<int>, test_allocator<int>> _a {}; }
+    { ert::unordered_multiset<int, std::hash<int>, test_allocator<int>> _a {}; }
+    { ert::unordered_map<int, int, std::hash<int>, test_allocator<std::pair<const int, int>>> _a {}; }
+    { ert::unordered_multimap <int, int, std::hash<int>, test_allocator<std::pair<const int, int>>> _a {}; }
+    { ert::stack<int, ert::deque<int, test_allocator<int>>> _a {}; }
+    { ert::queue<int, ert::deque<int, test_allocator<int>>> _a {}; }
 }
 
 TEST_F(stl_container_tests, instantiate_pmr_stl_containers) {
@@ -339,20 +384,70 @@ TEST_F(stl_container_tests, instantiate_pmr_stl_containers) {
 // ===
 
 // === Smart pointer tests ===
-TEST_F(smart_pointer_tests, make_shared) {
+TEST_F(smart_pointer_tests, shared_ptr) {
+    auto& state = ert::profile_state<ert::default_writer_type>::get_state();
+    // The writer must've been set up at the beginning of the program.
+    ASSERT_EQ(state.get_alloc_writer().is_setup, true);
+    // We didn't allocate yet
+    ASSERT_EQ(state.get_alloc_writer().num_writes, 0);
+    ASSERT_EQ(state.get_dealloc_writer().num_writes, 0);
+    {
+        ert::shared_ptr<int> ptr = ert::make_shared<int>();
+        ASSERT_EQ(state.get_alloc_writer().num_writes, 1);
+        ASSERT_EQ(state.get_dealloc_writer().num_writes, 0);
 
+        auto alloc_array_record = state.get_alloc_writer().latest_record;
+        // The size needs to be AS big as int, and likely bigger because shared_ptr initializes some of its own
+        // data on the heap.
+        ASSERT_GE(alloc_array_record.size, sizeof(int));
+    }
+    ASSERT_EQ(state.get_alloc_writer().num_writes, 1);
+    ASSERT_EQ(state.get_dealloc_writer().num_writes, 1);
+    {
+        // Shared ptr has type erasure
+        ert::shared_ptr<int> ptr = ert::allocate_shared<int>(test_allocator<int>());
+        ASSERT_EQ(state.get_alloc_writer().num_writes, 2);
+        ASSERT_EQ(state.get_dealloc_writer().num_writes, 1);
+
+        auto alloc_array_record = state.get_alloc_writer().latest_record;
+        // The size needs to be AS big as int, and likely bigger because shared_ptr initializes some of its own
+        // data on the heap.
+        ASSERT_GE(alloc_array_record.size, sizeof(int));
+    }
+    ASSERT_EQ(state.get_alloc_writer().num_writes, 2);
+    ASSERT_EQ(state.get_dealloc_writer().num_writes, 2);
 }
 
-TEST_F(smart_pointer_tests, allocate_shared) {
-    ASSERT_EQ(1, 1);
-}
+TEST_F(smart_pointer_tests, unique_ptr) {
+    auto& state = ert::profile_state<ert::default_writer_type>::get_state();
+    // The writer must've been set up at the beginning of the program.
+    ASSERT_EQ(state.get_alloc_writer().is_setup, true);
+    // We didn't allocate yet
+    ASSERT_EQ(state.get_alloc_writer().num_writes, 0);
+    ASSERT_EQ(state.get_dealloc_writer().num_writes, 0);
+    {
+        ert::unique_ptr<int> ptr = ert::make_unique<int>();
+        ASSERT_EQ(state.get_alloc_writer().num_writes, 1);
+        ASSERT_EQ(state.get_dealloc_writer().num_writes, 0);
 
-TEST_F(smart_pointer_tests, make_unique) {
-    ASSERT_EQ(1, 1);
-}
+        auto alloc_array_record = state.get_alloc_writer().latest_record;
+        // The size needs to be AS big as int, and likely bigger because shared_ptr initializes some of its own
+        // data on the heap.
+        ASSERT_GE(alloc_array_record.size, sizeof(int));
+    }
+    ASSERT_EQ(state.get_alloc_writer().num_writes, 1);
+    ASSERT_EQ(state.get_dealloc_writer().num_writes, 1);
+    {
+        // This type is kinda long
+        auto ptr = ert::allocate_unique<int>(test_allocator<inert::unique_ptr<T, details::alloc_deleter>t>());
+        ASSERT_EQ(state.get_alloc_writer().num_writes, 2);
+        ASSERT_EQ(state.get_dealloc_writer().num_writes, 1);
 
-TEST_F(smart_pointer_tests, allocate_unique) {
-    ASSERT_EQ(1, 1);
-}
-// ===
+        auto alloc_array_record = state.get_alloc_writer().latest_record;
+        // The size needs to be AS big as int, and likely bigger because shared_ptr initializes some of its own
+        // data on the heap.
+        ASSERT_GE(alloc_array_record.size, sizeof(int));
+    }
+    ASSERT_EQ(state.get_alloc_writer().num_writes, 2);
+    ASSERT_EQ(state.get_dealloc_writer().num_writes, 2);
 }

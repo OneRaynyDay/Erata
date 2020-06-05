@@ -50,7 +50,7 @@ std::shared_ptr<T> make_shared(Args&&... args) {
 /// Allocate a unique_ptr type using a wrapped version of allocator.
 /// NOTE: Because the STL does not have alloc_unique yet, we will supply an implementation ourselves.
 template <typename T, typename Alloc, typename... Args>
-ert::unique_ptr<T> allocate_unique(const Alloc& alloc, Args&&... args) {
+auto allocate_unique(const Alloc& alloc, Args&&... args) {
     // Allow rebinding of the allocator type
     using rebound_allocator_type = typename std::allocator_traits<Alloc>::template rebind_alloc<T>;
     auto prof_alloc = profile_allocator<T, rebound_allocator_type>(alloc);

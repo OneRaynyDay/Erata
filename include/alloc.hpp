@@ -205,7 +205,7 @@ public:
     // If there really is a special case that requires customizing reference types,
     // then come back to this later.
 
-    template <class U>
+    template <typename U>
     struct rebind {
         typedef profile_allocator<U,
                                   typename std::allocator_traits<base_allocator>::template rebind_alloc<U>> other;
@@ -258,6 +258,20 @@ private:
     profile_state<default_writer_type>& state;
     // We want to call the underlying allocator type
 };
+
+template <typename T, typename U, typename base_allocator>
+inline bool operator == (const profile_allocator<T, base_allocator>& a,
+        const profile_allocator<U, typename std::allocator_traits<base_allocator>::template rebind_alloc<U>>& b)
+{
+    return a.alloc == b.alloc;
+}
+
+template <typename T, typename U, typename base_allocator>
+inline bool operator != (const profile_allocator<T, base_allocator>& a,
+        const profile_allocator<U, typename std::allocator_traits<base_allocator>::template rebind_alloc<U>>& b)
+{
+    return a.alloc != b.alloc;
+}
 
 } // namespace ert
 
