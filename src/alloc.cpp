@@ -1,6 +1,7 @@
 #include "alloc.hpp"
 #include "pointer_types.hpp"
 #include "stl_containers.hpp"
+#include <thread>
 #include <list>
 #include <vector>
 
@@ -61,6 +62,23 @@ int main() {
     // Currently, this prints out 8, 24. Optimizing this is on our TODO list.
     fmt::print("size of unique_ptrs : stl: {}, ert: {}", sizeof(std::unique_ptr<int>), sizeof(ert::unique_ptr<int>));
 
-    ert::writer::test_concepts(ert::writer::file_logger());
+    auto thread_alloc = [](){
+        ert::list<int> v;
+        v.push_back(1);
+        v.push_back(1);
+        v.push_back(1);
+        v.push_back(1);
+        v.push_back(1);
+    };
+
+    ert::vector<std::thread> threads;
+    for (int i = 0; i < 10; i++) {
+        threads.emplace_back(thread_alloc);
+    }
+
+    for (int i = 0; i < 10; i++) {
+        threads[i].join();
+    }
+
     return 0;
 }

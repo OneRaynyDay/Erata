@@ -16,6 +16,12 @@
 // Using json to stringify ending maps
 #include "nlohmann/json.hpp"
 
+// Using filesystem to create directories for log files
+#include <filesystem>
+
+// Need to only create directory as main thread
+#include <sys/types.h>
+
 namespace ert {
 namespace writer {
 
@@ -44,14 +50,21 @@ public:
     /// of the constructor but we want a unified interface
     void setup(const std::string& tag) {
         auto this_id = get_tid();
-        // TODO: don't hardcode this
-        std::string dir_path = "erata";
-        if (std::filesystem::exists(dir_path))
-            throw std::runtime_error(fmt::format("Cannot create folder {} because this path already exists.", dir_path));
-        std::filesystem::create_directories(dir_path);
+        std::string dir_path = fmt::format("{}/{}", "erata", tag);
+
+        // If the thread is the main thread, we do this.
+        // We haven't yet ran into a situation where gettid() does not exist yet.
+        // https://stackoverflow.com/questions/20530218/check-if-current-thread-is-main-thread
+        if (gettid() == getpid()) {
+            // TODO: don't hardcode this
+            if (std::filesystem::exists(dir_path))
+                throw std::runtime_error(
+                        fmt::format("Cannot create folder {} because the path already exists.", dir_path));
+            std::filesystem::create_directories(dir_path);
+        }
 
         // TODO We can use std::filesystem here partially
-        std::string file_name = fmt::format("{}/{}_{}.json", dir_path, tag, this_id);
+        std::string file_name = fmt::format("{}/{}.json", dir_path, this_id);
         std::string logger_name = fmt::format("{}_logger_{}", tag, this_id);
 
         logger = spdlog::basic_logger_st(logger_name, file_name);

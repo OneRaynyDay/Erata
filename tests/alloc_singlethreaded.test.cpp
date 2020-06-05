@@ -439,7 +439,7 @@ TEST_F(smart_pointer_tests, unique_ptr) {
     ASSERT_EQ(state.get_dealloc_writer().num_writes, 1);
     {
         // This type is kinda long
-        auto ptr = ert::allocate_unique<int>(test_allocator<inert::unique_ptr<T, details::alloc_deleter>t>());
+        auto ptr = ert::allocate_unique<int>(test_allocator<int>());
         ASSERT_EQ(state.get_alloc_writer().num_writes, 2);
         ASSERT_EQ(state.get_dealloc_writer().num_writes, 1);
 

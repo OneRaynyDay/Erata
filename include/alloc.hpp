@@ -28,9 +28,6 @@
 #include <typeinfo>
 #include <cxxabi.h>
 
-// Using filesystem to create directories for log files
-#include <filesystem>
-
 // Thread id needed
 #include <thread>
 
