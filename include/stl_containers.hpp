@@ -1,5 +1,19 @@
 #pragma once
 #include "alloc.hpp"
+// Including all the data structures here so we can typedef in pmr namespace
+#include <array>
+#include <vector>
+#include <deque>
+#include <forward_list>
+#include <list>
+#include <set>
+#include <map>
+#include <unordered_set>
+#include <unordered_map>
+#include <stack>
+#include <queue>
+#include <string>
+
 
 namespace ert {
 /// Offer equivalent STL container types.
