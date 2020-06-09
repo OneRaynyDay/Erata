@@ -39,7 +39,7 @@ def generate_file():
 
   line_prepender('index.html', dataString)
 
-generate_file()
+# generate_file()
 
 # # print(j.read())
 
