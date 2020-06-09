@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <script>
-  const data = [
+  const test_data = [
     [0, 0, 0, 0, 0, -1, 0, 0, 0, 0],
     [0, 1, 0, 0, 0, -1, 0, 0, 0, 0],
     [1, 1, 0, 0, 0, -1, 0, 0, 0, 0],
@@ -12,7 +12,7 @@
     [1, 1, 1, 1, 0, -1, 1, 1, 1, 1],
   ];
 
-  const size = 5;
+  const size = 1;
 </script>
 <html>
   <head>
@@ -26,7 +26,11 @@
   </body>
 </html>
 <script>
-  const svg = d3.select("body").append("svg");
+  const svg = d3
+    .select("body")
+    .append("svg")
+    .attr("width", 3000)
+    .attr("height", 100);
   data.forEach((row, rowIdx) => {
     row.forEach((cell, colIdx) => {
       svg
