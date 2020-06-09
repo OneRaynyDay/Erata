@@ -7,9 +7,9 @@ data = json.load(j)
 
 # 1. Parsing data
 # a) Figure out the relevant location range
-#   - This is our min location to our max location + size allocated at that point
+#   - [min location, max location + size allocated at that value]
 # b) Figure out the relevant time range [DONE]
-#   - This is start_ts, up until max ts
+#   - [start_ts, max ts]
 
 # 2. Generate 2-dimensional heatmap of memory allocation over time
 # Values are already sorted by timestamp
@@ -17,6 +17,9 @@ data = json.load(j)
 
 start_ts = data['start_ts']
 end_ts = max(value['ts'] for value in data['values'])
+
+start_l = min(value['l'] for value in data['values'])
+end_l = max(value['l'] + value['s'] for value in data['values'])
 
 # https://stackoverflow.com/questions/5914627/prepend-line-to-beginning-of-a-file
 def line_prepender(filename, line):
