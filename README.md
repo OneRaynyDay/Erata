@@ -1,4 +1,5 @@
 # Erata
+
 Measuring heap fragmentation by providing a modern, header-only C++20 metrics-collecting allocator and corresponding allocator-aware containers.
 
 **NOTE**: The library isn't fully implemented yet. So far, only single-threaded implementation is supported, and g++ is known to be supported.
@@ -7,6 +8,9 @@ Measuring heap fragmentation by providing a modern, header-only C++20 metrics-co
 
 To use the allocator, simply copy and include the [header file](https://raw.githubusercontent.com/OneRaynyDay/Erata/master/include/alloc.hpp) `alloc.hpp` in this repo.
 
+## Visualization
+
+To generate the sample visualization, run `python3 client/generate.py`. This makes a copy of `client/template.html`, and prepends a `<script />` tag with data parsed from `client/test_data.json`. Then, you can just open `client/index.html` in your browser, and it will console log sample data.
 
 ## How to Use
 
