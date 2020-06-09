@@ -6,13 +6,15 @@ j = open("test_data.json", "r")
 data = json.load(j)
 
 # 1. Parsing data
-# a) Figure out the relevant location range
+# a) Figure out the relevant location range [DONE]
 #   - [min location, max location + size allocated at that value]
 # b) Figure out the relevant time range [DONE]
 #   - [start_ts, max ts]
+# c) Figure out how to remove large empty gaps
 
 # 2. Generate 2-dimensional heatmap of memory allocation over time
 # Values are already sorted by timestamp
+# Do we use one slot for every byte?
 # a) At each timestamp, generate a new array with the currently allocated memory
 
 start_ts = data['start_ts']
@@ -32,10 +34,12 @@ def generate_file():
   copyfile('template.html', 'index.html')
 
   dataString = f'''<script>
-    const data = {data}
-    </script>'''
+  const data = {data}
+</script>'''
 
   line_prepender('index.html', dataString)
+
+generate_file()
 
 # # print(j.read())
 

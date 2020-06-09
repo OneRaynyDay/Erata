@@ -1,4 +1,19 @@
 <!DOCTYPE html>
+<script>
+  const data = [
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+    [1, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+    [1, 1, 0, 0, 0, 0, 0, 1, 0, 0],
+    [1, 1, 0, 0, 0, 0, 0, 1, 1, 0],
+    [1, 1, 0, 0, 0, 0, 0, 1, 1, 1],
+    [1, 1, 0, 0, 0, 0, 1, 1, 1, 1],
+    [1, 1, 1, 0, 0, 0, 1, 1, 1, 1],
+    [1, 1, 1, 1, 0, 0, 1, 1, 1, 1],
+  ];
+
+  const size = 5;
+</script>
 <html>
   <head>
     <script
@@ -7,10 +22,20 @@
     ></script>
   </head>
   <body>
-    <p>Hello!!!</p>
+    <h2>Erata</h2>
   </body>
 </html>
 <script>
-  console.log("hello");
-  console.log(data);
+  const svg = d3.select("body").append("svg");
+  data.forEach((row, rowIdx) => {
+    row.forEach((cell, colIdx) => {
+      svg
+        .append("rect")
+        .attr("x", colIdx * size)
+        .attr("y", rowIdx * size)
+        .attr("width", size)
+        .attr("height", size)
+        .style("fill", cell ? "red" : "#ccc");
+    });
+  });
 </script>
