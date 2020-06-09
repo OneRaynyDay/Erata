@@ -5,6 +5,19 @@ from shutil import copyfile
 j = open("test_data.json", "r")
 data = json.load(j)
 
+# 1. Parsing data
+# a) Figure out the relevant location range
+#   - This is our min location to our max location + size allocated at that point
+# b) Figure out the relevant time range [DONE]
+#   - This is start_ts, up until max ts
+
+# 2. Generate 2-dimensional heatmap of memory allocation over time
+# Values are already sorted by timestamp
+# a) At each timestamp, generate a new array with the currently allocated memory
+
+start_ts = data['start_ts']
+end_ts = max(value['ts'] for value in data['values'])
+
 # https://stackoverflow.com/questions/5914627/prepend-line-to-beginning-of-a-file
 def line_prepender(filename, line):
     with open(filename, 'r+') as f:
@@ -12,13 +25,14 @@ def line_prepender(filename, line):
         f.seek(0, 0)
         f.write(line.rstrip('\r\n') + '\n' + content)
 
-copyfile('template.html', 'index.html')
+def generate_file():
+  copyfile('template.html', 'index.html')
 
-dataString = f'''<script>
-  const data = {data}
-  </script>'''
+  dataString = f'''<script>
+    const data = {data}
+    </script>'''
 
-line_prepender('index.html', dataString)
+  line_prepender('index.html', dataString)
 
 # # print(j.read())
 
