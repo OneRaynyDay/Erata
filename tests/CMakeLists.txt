@@ -1,4 +1,4 @@
-add_executable("${PROJECT_NAME}-test" alloc_singlethreaded.test.cpp container_types.test.cpp alloc_main.test.cpp)
+add_executable("${PROJECT_NAME}-test" alloc_singlethreaded.test.cpp alloc_main.test.cpp)
 
 target_include_directories("${PROJECT_NAME}-test" PUBLIC ../include)
 # Required for test writers

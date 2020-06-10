@@ -10,13 +10,12 @@ namespace writer {
 /// Concepts required for the writers used by profile_state. This allows writing to network
 /// to files, and maybe to other things.
 /// TODO: Somehow consolidate this with the API of profile_allocator
-template<typename T>
-concept is_writer = requires(T a,
-                             std::string str,
-                             ert::record record,
-                             timestamp_type timestamp,
-                             scope_map scope,
-                             type_map type) {
+template<typename T> concept is_writer = requires(T a,
+                                                  std::string str,
+                                                  ert::record record,
+                                                  timestamp_type timestamp,
+                                                  scope_map scope,
+                                                  type_map type) {
     // A mandatory setup stage (can be no-op)
     // So far, passes some kind of string tag
     a.setup(str);

@@ -4,7 +4,7 @@
 
 namespace ert {
 
-inline timestamp_type get_current_timestamp() {
+timestamp_type get_current_timestamp() {
     return std::chrono::system_clock::now().time_since_epoch().count();
 }
 
@@ -29,7 +29,9 @@ struct record {
            timestamp(get_current_timestamp()) {}
 
     record() = default;
+
     record(const record &) = default;
+
     record &operator=(const record &) = default;
 };
 } // namespace ert

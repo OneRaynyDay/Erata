@@ -1,8 +1,6 @@
 #pragma once
 
-// Require record and the serialization for records
 #include "record.hpp"
-#include "serialization.hpp"
 
 // Require writer concept
 #include "writer_concept.hpp"
@@ -15,6 +13,9 @@
 #include "spdlog/fmt/fmt.h"
 #include "spdlog/fmt/bundled/chrono.h"
 
+// Using json to stringify ending maps
+#include "nlohmann/json.hpp"
+
 // Using filesystem to create directories for log files
 #include <filesystem>
 
@@ -24,16 +25,17 @@
 namespace ert {
 namespace writer {
 
-class spd_file_logger {
+class file_logger {
     // Logger type is single-threaded for performance. We copy a new
     // single-threaded logger upon creating a new thread.
     using logger_type = std::shared_ptr<spdlog::logger>;
+    using json = nlohmann::json;
 
     logger_type logger;
 public:
-    spd_file_logger() = default;
-    spd_file_logger(const spd_file_logger&) = default;
-    spd_file_logger& operator=(const spd_file_logger&) = default;
+    file_logger() = default;
+    file_logger(const file_logger&) = default;
+    file_logger& operator=(const file_logger&) = default;
 
     std::string get_tid() {
         // thread id cannot be converted to an int easily, so we just hack around it by getting the string repr
@@ -73,8 +75,8 @@ public:
         logger->info(record);
     }
     void end(const timestamp_type& ts, const scope_map& scope_names, const type_map& type_names) const {
-        std::string scope_json = ert::to_json(scope_names);
-        std::string type_json = ert::to_json(type_names);
+        json scope_json(scope_names);
+        json type_json(type_names);
         std::string scope_dump = scope_json.dump();
         std::string type_dump = type_json.dump();
         logger->info("], ");

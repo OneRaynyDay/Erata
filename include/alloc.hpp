@@ -4,10 +4,24 @@
 #define STRINGIFY(a) STRINGIFY_(a)
 // Require record type object
 #ifndef DEFAULT_WRITER_TYPE
-#define DEFAULT_WRITER_TYPE spd_file_logger
+#define DEFAULT_WRITER_TYPE file_logger
 #endif
 // So far, we only include the single hpp required for writer to prevent code bloat.
 #include STRINGIFY(DEFAULT_WRITER_TYPE.hpp)
+
+// Including all the data structures here so we can typedef in pmr namespace
+#include <array>
+#include <vector>
+#include <deque>
+#include <forward_list>
+#include <list>
+#include <set>
+#include <map>
+#include <unordered_set>
+#include <unordered_map>
+#include <stack>
+#include <queue>
+#include <string>
 
 #include <chrono>
 #include <functional>
@@ -34,7 +48,6 @@ using default_writer_type = ert::writer::DEFAULT_WRITER_TYPE;
 // Designate the global scope to be of hash 0.
 static constexpr auto GLOBAL_SCOPE_HASH = 0;
 
-
 /// Statically managed state objects for allocators which are trivially copyable and movable.
 /// TODO: Check that this is thread-safe. This may require a singleton-per-thread thread_local storage design.
 template <typename writer_type=default_writer_type>
@@ -43,7 +56,7 @@ class profile_state {
     // The user is allows to change the scope of the profile_state so they can easily visualize which
     // section of the code they're currently running. We take the scope name and hash it here.
     // We'll be writing to disk a lot, so we don't want to serialize a ton of strings, but rather size_t's.
-    scope_stack scopes;
+    std::stack<std::size_t> scopes;
     scope_map scope_names;
 
     // TODO Optimize?
@@ -90,9 +103,18 @@ public:
         scopes.push(hash);
     }
 
+    std::string get_current_scope() {
+        auto it = scope_names.find(scopes.top());
+        if (it == scope_names.end()) [[unlikely]]
+            throw std::runtime_error("The current scope hash isn't in the scope name map. This should never happen.");
+        return it->second;
+    }
+
     /// Pops the scope from the stack and returns the context to the user.
-    void pop_scope() {
+    std::string pop_scope() {
+        auto scope = get_current_scope();
         scopes.pop();
+        return scope;
     }
 
     template <typename T>
@@ -123,7 +145,6 @@ public:
 private:
     profile_state() : scopes(), start_time(get_current_timestamp()) {
         scopes.push(GLOBAL_SCOPE_HASH);
-        scope_names.emplace(GLOBAL_SCOPE_HASH, "_global");
         alloc_writer.setup("alloc");
         dealloc_writer.setup("dealloc");
     }
@@ -158,8 +179,8 @@ void push_scope(const std::string& s) {
 }
 
 template <typename T=default_writer_type>
-void pop_scope() {
-    profile_state<default_writer_type>::get_state().pop_scope();
+std::string pop_scope() {
+    return profile_state<default_writer_type>::get_state().pop_scope();
 }
 
 template<typename T, typename base_allocator=std::allocator<T>>
